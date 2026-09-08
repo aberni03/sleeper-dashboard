@@ -47,18 +47,46 @@ _SUFFIX = re.compile(r"\b(jr|sr|ii|iii|iv|v)\b")
 # The crawl delay, not the network, is what makes a cold load slow: five requests
 # five seconds apart. Streamlit's cache dies with the process, so every restart
 # paid that again. Persisting to the same cache dir as the player file makes a
-# restart instant and keeps us well under FantasyPros' request budget.
-DISK_TTL = 3 * 3600
+# restart instant and keeps the request count negligible.
+#
+# The refresh cadence follows how the data actually moves rather than a flat TTL.
+# Monday to Friday a weekly consensus barely shifts, so one fetch per calendar
+# day is plenty — whoever opens the app first that day pays it and everyone else
+# reads their copy, since the cache is shared across sessions. Saturday and
+# Sunday it moves for real (inactives, injury rulings, late kickoffs), so it
+# refreshes hourly. Nothing is fetched on a schedule; this only decides whether a
+# visit is allowed to go to the network.
+WEEKEND_TTL = 3600
 
 
 def _disk_path(key):
     return os.path.join(S.DATA, f"fp_{key}.json")
 
 
-def _disk_get(key, max_age=DISK_TTL):
+def _now_et():
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        from datetime import datetime
+        return datetime.now()
+
+
+def _is_stale(path, now=None):
+    """Weekends: older than an hour. Weekdays: not written today."""
+    from datetime import datetime
+    now = now or _now_et()
+    written = datetime.fromtimestamp(os.path.getmtime(path), tz=now.tzinfo)
+    if now.weekday() >= 5:                       # Saturday, Sunday
+        return (now - written).total_seconds() >= WEEKEND_TTL
+    return written.date() != now.date()          # once per calendar day
+
+
+def _disk_get(key):
     fp = _disk_path(key)
     try:
-        if os.path.exists(fp) and (time.time() - os.path.getmtime(fp)) < max_age:
+        if os.path.exists(fp) and not _is_stale(fp):
             with open(fp) as f:
                 return json.load(f)
     except Exception:
@@ -149,7 +177,7 @@ def _fetch_url(url, week):
         return None
 
 
-@S.cache(ttl=3 * 3600)
+@S.cache(ttl=900)          # re-checks the disk; the disk decides on the network
 def rankings(slug, week):
     """{position: [player rows]} for one week and scoring format.
 
@@ -174,7 +202,7 @@ def rankings(slug, week):
     return _disk_put(key, out) if out else out
 
 
-@S.cache(ttl=3 * 3600)
+@S.cache(ttl=900)
 def overall(slug, week, superflex):
     """{normalized name+pos key: (overall_rank, std)} off the cross-position board."""
     key = f"ovr_{slug or 'std'}_{week}_{'sf' if superflex else 'flx'}"
@@ -188,7 +216,7 @@ def overall(slug, week, superflex):
     return {(_namekey(n), pos): (e, sd) for n, pos, e, sd in cached}
 
 
-@S.cache(ttl=3 * 3600)
+@S.cache(ttl=900)
 def by_sleeper_id(slug, week, superflex=False):
     """Index FantasyPros rows onto Sleeper player ids.
 
