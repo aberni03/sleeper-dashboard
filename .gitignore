@@ -1,0 +1,13 @@
+# Player cache (~16MB, regenerates on first run)
+data/
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+# Streamlit secrets — never commit API keys
+.streamlit/secrets.toml
+# macOS / iCloud
+.DS_Store
+*.icloud
+* (conflicted copy *)*
