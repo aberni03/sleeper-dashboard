@@ -23,16 +23,19 @@ CSS = """
 --grn:#19e59b;--red:#ff4d73;--amb:#ffc24b;--cyan:#38d6ff;--vio:#8b7bff;}
 *{font-family:'Inter',sans-serif;}
 .stApp{background:radial-gradient(1200px 500px at 15% -10%,#132449 0%,#070b16 55%) fixed;}
-#MainMenu,footer,header{visibility:hidden;}
-.block-container{padding-top:.6rem;padding-bottom:3rem;max-width:1200px;}
+#MainMenu,footer{visibility:hidden;}
+header[data-testid="stHeader"]{display:none!important;height:0!important;}
+div[data-testid="stToolbar"]{display:none!important;}
+div[data-testid="stDecoration"]{display:none!important;}
+.block-container{padding-top:.75rem;padding-bottom:3rem;max-width:1200px;}
 .mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}
-.mast{padding:0 2px 2px;}
+.mast{padding:0 2px 0;}
 .mast h1{font-size:26px;font-weight:900;color:#fff;margin:0;letter-spacing:-.6px;
   display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;}
 .mast h1 .ac{background:linear-gradient(90deg,var(--grn),var(--cyan));
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
 .mast h1 .kicker{font-size:11px;font-weight:800;letter-spacing:1.7px;color:var(--mut);text-transform:uppercase;}
-.mast .sub{color:var(--mut);font-size:13px;margin-top:5px;}
+.mast .sub{color:var(--mut);font-size:12.5px;margin-top:3px;}
 .statusline{display:flex;flex-wrap:wrap;gap:6px 22px;align-items:center;padding:2px 2px 0;
   font-size:11px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;color:var(--mut);}
 .statusline b{color:#c7d2ea;}
@@ -113,11 +116,21 @@ div[data-baseweb="tab-border"]{display:none!important;}
   background:#0e1830;border:1px solid #23345a;border-radius:6px;padding:1px 6px;margin-bottom:2px;text-transform:uppercase;letter-spacing:.4px;}
 .ai .txt{color:#e7edf7;font-size:13px;} .ai .txt b{color:#fff;} .ai .txt .g{color:var(--grn);font-weight:700;} .ai .txt .r{color:var(--red);}
 .lane .none{color:#5b688a;font-size:12.5px;font-style:italic;}
-  border-bottom:1px solid var(--line);padding:9px 4px;margin:8px 0 12px;}
 /* a timestamp, not a headline: the bold uppercase letter-spaced treatment was
    what made this read loud, more than its size */
-.upd{font-size:9px;color:#3b4660;letter-spacing:.1px;font-weight:500;
-  text-align:center;margin-top:5px;}
+.upd{font-size:9.5px;color:#46536f;letter-spacing:.2px;font-weight:500;
+  text-align:right;margin:4px 2px 0;white-space:nowrap;}
+/* header controls: a small input and a quiet ghost button, not two big blocks */
+.hdrctl div[data-testid="stTextInput"] input{
+  background:#0d1526!important;border:1px solid var(--line)!important;border-radius:9px!important;
+  color:#dbe4f7!important;font-size:12.5px!important;padding:7px 11px!important;height:34px!important;}
+.hdrctl div[data-testid="stTextInput"] input:focus{border-color:#2e4470!important;box-shadow:none!important;}
+.hdrctl div[data-testid="stTextInput"]{margin-bottom:0!important;}
+.hdrctl button{background:transparent!important;border:1px solid var(--line)!important;
+  border-radius:9px!important;color:#9fb0d0!important;font-size:12px!important;
+  font-weight:700!important;height:34px!important;min-height:34px!important;padding:0 12px!important;}
+.hdrctl button:hover{border-color:var(--grn)!important;color:var(--grn)!important;}
+.hdrctl button p{font-size:12px!important;font-weight:700!important;}
 /* matchup ticker — the track holds two copies of the same items, so translating
    it exactly half its width loops seamlessly with no visible jump */
 .ticker{position:relative;overflow:hidden;border-top:1px solid var(--line);
@@ -264,7 +277,7 @@ default_user = qp.get("u", "aberni3")
 
 # Masthead and the controls share one row, so nothing below is pushed down by a
 # full-width input that only needs a corner of the header.
-h1, h2, h3 = st.columns([6, 2, 1], vertical_alignment="center")
+h1, h2, h3 = st.columns([7, 2.1, 1.1], vertical_alignment="center")
 with h1:
     st.markdown(
         '<div class="mast"><h1>🏈 Fantasy <span class="ac">Command Center</span>'
@@ -272,10 +285,13 @@ with h1:
         '<div class="sub">Every lineup, waiver and trade decision across all your '
         'leagues — one scan.</div></div>', unsafe_allow_html=True)
 with h2:
+    st.markdown('<div class="hdrctl">', unsafe_allow_html=True)
     username = st.text_input("Sleeper username", value=default_user,
                              label_visibility="collapsed",
                              placeholder="Sleeper username…")
+    st.markdown('</div>', unsafe_allow_html=True)
 with h3:
+    st.markdown('<div class="hdrctl">', unsafe_allow_html=True)
     if st.button("↻ Refresh", use_container_width=True):
         st.cache_data.clear(); st.rerun()
     try:
@@ -284,7 +300,8 @@ with h3:
         _upd = datetime.now(ZoneInfo("America/New_York")).strftime("%-I:%M %p ET")
     except Exception:
         _upd = ""
-    st.markdown(f'<div class="upd">updated {esc(_upd)}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="upd">updated {esc(_upd)}</div></div>',
+                unsafe_allow_html=True)
 
 if username and username != qp.get("u"):
     st.query_params["u"] = username
