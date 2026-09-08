@@ -12,9 +12,10 @@ blob. FantasyPros' robots.txt disallows /api/, /json/, /ajax/ and /nfl/ranker/
 but NOT /nfl/rankings/, and asks for a 5 second crawl delay, which this module
 honours. Their official API is key-only (403 without one).
 
-REDISTRIBUTION: reading this for your own dashboard is not the same as serving
-it from a public URL — that republishes their product. ENABLE_FP is the gate:
-leave it on locally, off in a public deployment, where everything degrades
+REDISTRIBUTION: reading this for your own dashboard — locally, or on a private
+deployment only you can open — is not the same as serving it from a public URL,
+which republishes their product. ENABLE_FP gates it, and defaults ON; set
+SLEEPER_DASH_FP=0 for a public deploy. With it off, everything degrades
 gracefully to Sleeper projections.
 """
 import os
@@ -25,7 +26,12 @@ import requests
 
 import sleeper as S
 
-ENABLE_FP = True                      # off in a public deploy (see module docstring)
+# On by default, which is right for personal use — running this locally, or on a
+# private deployment only you can open, is your own use of their site. Set
+# SLEEPER_DASH_FP=0 in the environment to turn it off without editing code, which
+# is what a PUBLIC deployment should do: serving their rankings to anyone with
+# the link is redistribution, not personal use.
+ENABLE_FP = os.environ.get("SLEEPER_DASH_FP", "1") not in ("0", "false", "False")
 
 BASE = "https://www.fantasypros.com/nfl/rankings"
 CRAWL_DELAY = 5                       # seconds, per their robots.txt
