@@ -324,23 +324,34 @@ def _dedicated_slots(roster_positions):
     return out
 
 
-def _replacement(ctx, valuer, players, rid, dedicated):
-    """Value of the body that actually steps up when a starter is traded away.
+def _replacement(ctx, valuer, players, rid):
+    """Value of the best player at each position who is NOT in the optimal lineup.
 
-    This is what makes package deals judgeable: trading your RB3 out of a 2-RB
-    lineup costs you roughly nothing, because your RB4 slides in. Trading your
-    RB1 costs you RB1 minus RB3. Raw value totals miss that entirely.
+    Derived from the lineup itself rather than a slot count, so FLEX, REC_FLEX and
+    SUPER_FLEX are handled correctly: in superflex your QB2 is a starter and its
+    replacement is your QB3, while in a 1QB league that same QB2 IS the
+    replacement. That distinction is what makes package deals judgeable — trading
+    depth that never starts costs you close to nothing.
     """
     rt = next(t for t in ctx["teams"] if t["roster_id"] == rid)
-    by = {}
-    for pid in rt["players"]:
-        by.setdefault(pinfo(pid, players)["pos"], []).append(valuer.value(pid))
+    pids = [str(p) for p in rt["players"]]
+    _, bench = optimal_lineup(pids, ctx["roster_positions"], players, valuer.value)
     repl = {}
-    for pos, vals in by.items():
-        vals.sort(reverse=True)
-        n = dedicated.get(pos, 1)
-        repl[pos] = vals[n] if len(vals) > n else 0.0
+    for pid in bench:
+        pos = pinfo(pid, players)["pos"]
+        repl[pos] = max(repl.get(pos, 0.0), valuer.value(pid))
     return repl
+
+
+def _lineup_value(pids, ctx, valuer, players):
+    """Total asset value of the best startable lineup these players can field.
+
+    This is the roster-construction test: it prices a deal by what it does to the
+    lineup you can actually start, so a trade that stacks a position you can only
+    start one of, or that leaves a slot unfillable, shows up as a loss.
+    """
+    lu, _ = optimal_lineup(pids, ctx["roster_positions"], players, valuer.value)
+    return sum(valuer.value(pid) for _, pid in lu if pid)
 
 
 def _surplus_over_replacement(rows, repl):
@@ -353,10 +364,48 @@ def _surplus_over_replacement(rows, repl):
     return sum(max(0.0, r["val"] - repl.get(r["pos"], 0.0)) for r in rows)
 
 
+# FantasyCalc's published "waiver adjustment" for uneven trades. Since this app
+# prices players with FantasyCalc's values, it uses FantasyCalc's own constants
+# rather than a curve of our own invention. Their model: the side receiving MORE
+# bodies has to cut someone to fit them, so each extra body is worth only a
+# capped fraction of face value, and that difference is credited to the side
+# receiving FEWER players. Net effect: consolidating means paying a premium.
+# Source: fantasycalc.com/frequently-asked-questions#waiver-adjustment
+FC_ADJ = {
+    "dynasty": {"pct": 0.6982, "cap": 753, "step": 0.23, "flat": 0},
+    "redraft": {"pct": 0.42, "cap": 550, "step": 0.0, "flat": 200},
+}
+
+
+def package_adjustment(gives, gets, dynasty):
+    """Value credited to each side for an uneven package, on FantasyCalc's scale.
+
+    Returns (adj_to_gives, adj_to_gets). The k lowest-valued assets on the
+    longer side each contribute min(value*pct, cap + i*step); the total goes to
+    the shorter side.
+    """
+    ng, nt = len(gives), len(gets)
+    if ng == nt or not gives or not gets:
+        return 0.0, 0.0
+    c = FC_ADJ["dynasty"] if dynasty else FC_ADJ["redraft"]
+    longer = gives if ng > nt else gets
+    k = abs(ng - nt)
+    extras = sorted(r.get("raw", 0) for r in longer)[:k]      # the k cheapest
+    adj = sum(min(vv * c["pct"], c["cap"] + i * c["step"]) for i, vv in enumerate(extras))
+    adj += max(0, (k - 1) * c["flat"])
+    return (adj, 0.0) if ng < nt else (0.0, adj)
+
+
+TRADE_SHAPES = {(1, 1), (2, 1), (2, 2)}      # (players out, players in)
+MAX_PER_PARTNER = 2                          # one rival shouldn't fill the board
+
+
 def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
     """Mutually-beneficial trades, including packages.
 
-    Shapes: 1-for-1, 2-for-1 (consolidation) and 2-for-2. Every shape is judged on
+    Shapes are deliberately limited to TRADE_SHAPES — 1-for-1, 2-for-1
+    (consolidation) and 2-for-2. Bigger packages are harder to get accepted and
+    much harder to price honestly, so they're out of scope. Every shape is judged on
     value over replacement for BOTH rosters, not on raw totals — two bench pieces
     for one starter can be a genuine win for both sides even when the raw values
     look lopsided, because the depth being sent out was never in a lineup.
@@ -369,16 +418,24 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
     my_rid = mine["roster_id"]
     my_str = teams[my_rid]["strength"]
     dedicated = _dedicated_slots(ctx["roster_positions"])
-    my_repl = _replacement(ctx, valuer, players, my_rid, dedicated)
+    my_repl = _replacement(ctx, valuer, players, my_rid)
+
+    my_pids = [str(p) for p in mine["players"]]
+    my_base_lineup = _lineup_value(my_pids, ctx, valuer, players)
 
     surplus = sorted([p for p in core if my_str[p] > avg[p] * 1.08],
                      key=lambda p: my_str[p] - avg[p], reverse=True)
     needs = sorted([p for p in core if my_str[p] < avg[p] * 0.98],
                    key=lambda p: avg[p] - my_str[p], reverse=True)
+    stacked = not needs           # above average everywhere: no hole to fill
     if not needs:
         needs = sorted(core, key=lambda p: my_str[p] - avg[p])[:2]
     if not surplus or not needs:
         return []
+    # A stacked roster isn't filling holes, it's consolidating depth into quality,
+    # so partners only need to be respectable at the target rather than rich in it.
+    need_bar = 1.00 if stacked else 1.05
+    sur_bar = 1.12 if stacked else 1.02
 
     def players_at(rid, pos):
         rt = next(t for t in ctx["teams"] if t["roster_id"] == rid)
@@ -392,12 +449,17 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
     for rid, tm in teams.items():
         if rid == my_rid:
             continue
-        their_repl = _replacement(ctx, valuer, players, rid, dedicated)
+        their_repl = _replacement(ctx, valuer, players, rid)
+        their_pids = [str(x) for x in
+                      next(t for t in ctx["teams"] if t["roster_id"] == rid)["players"]]
+        their_base_lineup = _lineup_value(their_pids, ctx, valuer, players)
         for my_need in needs:
             for my_sur in surplus:
-                if tm["strength"][my_need] < avg[my_need] * 1.05:
-                    continue                                   # they aren't rich at my need
-                if tm["strength"][my_sur] > avg[my_sur] * 1.02:
+                if my_need == my_sur:
+                    continue                                   # not a trade, a shuffle
+                if tm["strength"][my_need] < avg[my_need] * need_bar:
+                    continue                                   # they aren't strong at my need
+                if tm["strength"][my_sur] > avg[my_sur] * sur_bar:
                     continue                                   # they don't need my surplus
                 give_pool = players_at(my_rid, my_sur)
                 get_pool = players_at(rid, my_need)
@@ -409,31 +471,63 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
                 # 1-for-1: my second-best surplus piece for their closest match
                 one = give_pool[1]
                 shapes.append(([one], [min(get_pool, key=lambda r: abs(r["val"] - one["val"]))]))
-                # 2-for-1 consolidation: two depth pieces for their best at my need
-                if len(give_pool) >= keep + 2 and len(give_pool) >= 3:
-                    pair = [give_pool[1], give_pool[2]]
+
+                # A package should send pieces from DIFFERENT positions — no team
+                # wants two TEs when it starts one. Prefer a second piece from
+                # another surplus spot; only double up on one position as a last
+                # resort, and the partner-lineup test below still has to agree.
+                second = None
+                for alt in surplus:
+                    if alt == my_sur:
+                        continue
+                    alt_pool = players_at(my_rid, alt)
+                    if len(alt_pool) >= dedicated.get(alt, 1) + 2:
+                        second = alt_pool[1]
+                        break
+                if second is None and len(give_pool) >= max(keep + 2, 3):
+                    second = give_pool[2]
+
+                if second is not None:
+                    pair = [one, second]
                     tot = sum(r["val"] for r in pair)
+                    # 2-for-1 consolidation: two pieces for their best at my need
                     stud = min(get_pool, key=lambda r: abs(r["val"] - tot))
-                    if stud["val"] > pair[0]["val"] * 1.05:     # the deal must land a clear best player
+                    if stud["val"] > pair[0]["val"] * 1.05:
                         shapes.append((pair, [stud]))
-                # 2-for-2
-                if len(give_pool) >= keep + 2 and len(get_pool) >= 2:
-                    pair = [give_pool[1], give_pool[2]] if len(give_pool) >= 3 else None
-                    if pair:
-                        tot = sum(r["val"] for r in pair)
+                    # 2-for-2: pull the second piece back from a different position
+                    other_needs = [n for n in needs if n != my_need] or [my_need]
+                    back_pool = get_pool + players_at(rid, other_needs[0])
+                    seen_ids = set()
+                    back_pool = [r for r in back_pool
+                                 if not (r["id"] in seen_ids or seen_ids.add(r["id"]))]
+                    if len(back_pool) >= 2:
                         best2, bestd = None, None
-                        for i in range(len(get_pool)):
-                            for j in range(i + 1, len(get_pool)):
-                                d = abs(get_pool[i]["val"] + get_pool[j]["val"] - tot)
+                        for i in range(len(back_pool)):
+                            for j in range(i + 1, len(back_pool)):
+                                a, b = back_pool[i], back_pool[j]
+                                if a["pos"] == b["pos"] and a["pos"] not in ("RB", "WR"):
+                                    continue          # two QBs / two TEs: no
+                                d = abs(a["val"] + b["val"] - tot)
                                 if bestd is None or d < bestd:
-                                    bestd, best2 = d, [get_pool[i], get_pool[j]]
+                                    bestd, best2 = d, [a, b]
                         if best2:
                             shapes.append((pair, best2))
 
                 for gives, gets in shapes:
+                    if (len(gives), len(gets)) not in TRADE_SHAPES:
+                        continue
                     gv = sum(r["val"] for r in gives)
                     tv = sum(r["val"] for r in gets)
-                    if max(gv, tv) == 0 or abs(gv - tv) / max(gv, tv) > tolerance:
+                    # fairness on FantasyCalc's raw scale plus their uneven-package
+                    # adjustment, so a 2-for-1 has to pay the consolidation premium
+                    g_raw = sum(r.get("raw", 0) for r in gives)
+                    t_raw = sum(r.get("raw", 0) for r in gets)
+                    if g_raw and t_raw:
+                        ag, at = package_adjustment(gives, gets, ctx["format"] == "dynasty")
+                        g_cmp, t_cmp = g_raw + ag, t_raw + at
+                    else:
+                        g_cmp, t_cmp = gv, tv           # uncovered players: no adjustment
+                    if max(g_cmp, t_cmp) == 0 or abs(g_cmp - t_cmp) / max(g_cmp, t_cmp) > tolerance:
                         continue
                     # win-win test on value over replacement, both directions
                     my_net = _surplus_over_replacement(gets, my_repl) - \
@@ -442,6 +536,34 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
                         _surplus_over_replacement(gets, their_repl)
                     if my_net <= 0 or their_net <= 0:
                         continue
+                    # roster construction: does my actual startable lineup improve?
+                    out_ids = {r["id"] for r in gives}
+                    after = [x for x in my_pids if x not in out_ids] + [r["id"] for r in gets]
+                    lineup_delta = round(
+                        _lineup_value(after, ctx, valuer, players) - my_base_lineup, 1)
+                    # ...and a usability test from THEIR side. A consolidating
+                    # partner's starting lineup gets WORSE by design (they trade
+                    # quality for depth), so requiring it to improve would reject
+                    # every package. What actually matters is whether they can USE
+                    # every piece: if the second body rides their bench, no one
+                    # accepts. This is what rules out "two TEs for a QB".
+                    in_ids = {r["id"] for r in gets}
+                    their_after = ([x for x in their_pids if x not in in_ids]
+                                   + [r["id"] for r in gives])
+                    their_lu, _ = optimal_lineup(their_after, ctx["roster_positions"],
+                                                 players, valuer.value)
+                    their_started = {pid for _, pid in their_lu if pid}
+                    their_delta = round(
+                        sum(valuer.value(pid) for pid in their_started) - their_base_lineup, 1)
+                    if len(gives) > 1 and not all(r["id"] in their_started for r in gives):
+                        continue
+                    # same rule for me when I'm the one taking on more bodies
+                    if len(gets) > 1:
+                        my_lu, _ = optimal_lineup(after, ctx["roster_positions"],
+                                                  players, valuer.value)
+                        my_started = {pid for _, pid in my_lu if pid}
+                        if not all(r["id"] in my_started for r in gets):
+                            continue
 
                     shape = f"{len(gives)}-for-{len(gets)}"
                     gnames = " + ".join(r["name"] for r in gives)
@@ -461,20 +583,36 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
                         "give_raw": sum(r["raw"] for r in gives),
                         "get_raw": sum(r["raw"] for r in gets),
                         "my_net": round(my_net, 1), "their_net": round(their_net, 1),
+                        "lineup_delta": lineup_delta, "their_lineup_delta": their_delta,
                         "my_pos_out": my_sur, "my_pos_in": my_need,
-                        "fairness": round(100 - abs(gv - tv) / max(gv, tv) * 100, 0),
+                        "fairness": round(100 - abs(g_cmp - t_cmp) / max(g_cmp, t_cmp) * 100, 0),
+                        "package_adj": round((ag if g_raw and t_raw else 0)
+                                             + (at if g_raw and t_raw else 0), 0),
                         "rationale": f"{why} You send {gnames}, you get {tnames}. "
-                                     f"Values within {abs(gv-tv)/max(gv,tv)*100:.0f}%.",
+                                     f"Values within "
+                                     f"{abs(g_cmp-t_cmp)/max(g_cmp,t_cmp)*100:.0f}% "
+                                     f"after the roster-spot adjustment.",
                     })
 
-    # dedupe by the exact set of players involved; keep the fairest
-    seen, uniq = set(), []
-    for i in sorted(ideas, key=lambda x: (x["my_net"], x["fairness"]), reverse=True):
-        k = (tuple(sorted(r["id"] for r in i["gives"])),
-             tuple(sorted(r["id"] for r in i["gets"])))
-        if k in seen:
+    # Variety filter. Four different routes to the same player read as the same
+    # trade to a human, so keep only the best offer for each asset acquired, and
+    # stop any one partner from filling the whole board.
+    seen, headline, per_partner, uniq = set(), set(), {}, []
+    for i in sorted(ideas, key=lambda x: (x["lineup_delta"], x["my_net"], x["fairness"]),
+                    reverse=True):
+        key = (tuple(sorted(r["id"] for r in i["gives"])),
+               tuple(sorted(r["id"] for r in i["gets"])))
+        if key in seen:
             continue
-        seen.add(k)
+        head = i["gets"][0]["id"]                  # the main piece coming back
+        if head in headline:
+            continue
+        rid = i["partner_rid"]
+        if per_partner.get(rid, 0) >= MAX_PER_PARTNER:
+            continue
+        seen.add(key)
+        headline.add(head)
+        per_partner[rid] = per_partner.get(rid, 0) + 1
         uniq.append(i)
     return uniq[:max_ideas]
 
