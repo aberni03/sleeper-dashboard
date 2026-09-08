@@ -523,7 +523,40 @@ MAX_PER_PARTNER = 2                          # one rival shouldn't fill the boar
 
 
 def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
-    """Mutually-beneficial trades, including packages.
+    """At least one idea for every league that allows trading.
+
+    The strict pass demands a lot: a partner rich exactly where you're thin and
+    thin where you're deep, values inside 20%, and both sides ahead on value over
+    replacement. On a balanced roster in a shallow league nothing clears that, and
+    an empty board is not a useful answer. So the search runs in passes, each
+    loosening one constraint, and stops at the first that produces something:
+
+      1. strict — the mirror-image partner described above
+      2. wider  — 30% value band, partner screen relaxed
+      3. open   — drop the positional mirror entirely; any fair deal that helps
+                  both rosters counts
+      4. wider  — same, with a 40% value band
+      5. picks  — for a rebuilding roster, sell a win-now piece for draft capital
+
+    Later passes are looser, not laxer: fairness and the both-sides-benefit test
+    hold throughout. Only the search for a partner widens.
+    """
+    passes = [
+        dict(tolerance=tolerance, mirror=True, need_mult=1.0, sur_mult=1.0),
+        dict(tolerance=0.30, mirror=True, need_mult=0.95, sur_mult=1.15),
+        dict(tolerance=0.30, mirror=False, need_mult=0.0, sur_mult=9.0),
+        dict(tolerance=0.40, mirror=False, need_mult=0.0, sur_mult=9.0),
+    ]
+    for kw in passes:
+        found = _trade_search(ctx, valuer, players, max_ideas, **kw)
+        if found:
+            return found
+    return _pick_ideas(ctx, valuer, players, max_ideas)
+
+
+def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
+                  mirror=True, need_mult=1.0, sur_mult=1.0):
+    """One pass of the trade search. See trade_ideas() for how passes escalate.
 
     Shapes are deliberately limited to TRADE_SHAPES — 1-for-1, 2-for-1
     (consolidation) and 2-for-2. Bigger packages are harder to get accepted and
@@ -557,8 +590,10 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
         return []
     # A stacked roster isn't filling holes, it's consolidating depth into quality,
     # so partners only need to be respectable at the target rather than rich in it.
-    need_bar = 1.00 if stacked else 1.05
-    sur_bar = 1.12 if stacked else 1.02
+    need_bar = (1.00 if stacked else 1.05) * need_mult
+    sur_bar = (1.12 if stacked else 1.02) * sur_mult
+    if not mirror:                       # open pass: any partner is a candidate
+        need_bar, sur_bar = 0.0, 99.0
 
     def players_at(rid, pos):
         rt = next(t for t in ctx["teams"] if t["roster_id"] == rid)
@@ -591,9 +626,15 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
                 keep = dedicated.get(my_sur, 1)                 # bodies I must keep
 
                 shapes = []
-                # 1-for-1: my second-best surplus piece for their closest match
-                one = give_pool[1]
-                shapes.append(([one], [min(get_pool, key=lambda r: abs(r["val"] - one["val"]))]))
+                # 1-for-1: try each of my non-stud pieces at this position, not
+                # only the second-best. With a single candidate there is often no
+                # asset on the other roster inside the fairness band, which is
+                # what produced empty boards — this widens the search, not the
+                # gates. give_pool[0] is never offered: you keep the stud.
+                for one in give_pool[1:4]:
+                    shapes.append(([one],
+                                   [min(get_pool, key=lambda r: abs(r["val"] - one["val"]))]))
+                one = give_pool[1]                  # packages build off this one
 
                 # A package should send pieces from DIFFERENT positions — no team
                 # wants two TEs when it starts one. Prefer a second piece from
@@ -724,7 +765,7 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
     # Variety filter. Four different routes to the same player read as the same
     # trade to a human, so keep only the best offer for each asset acquired, and
     # stop any one partner from filling the whole board.
-    seen, headline, per_partner, uniq = set(), set(), {}, []
+    seen, headline, per_partner, per_give, uniq = set(), set(), {}, {}, []
     # rank on what the deal actually improves: startable roster value, this
     # week's points, then surplus over replacement and fairness
     for i in sorted(ideas, key=lambda x: (x["lineup_delta"] + x["pts_delta"],
@@ -740,9 +781,132 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
         rid = i["partner_rid"]
         if per_partner.get(rid, 0) >= MAX_PER_PARTNER:
             continue
+        # three ways to move the same player reads as one idea, not three
+        out_key = i["gives"][0]["id"]
+        if per_give.get(out_key, 0) >= MAX_PER_PARTNER:
+            continue
         seen.add(key)
         headline.add(head)
         per_partner[rid] = per_partner.get(rid, 0) + 1
+        per_give[out_key] = per_give.get(out_key, 0) + 1
+        uniq.append(i)
+    return uniq[:max_ideas]
+
+
+def _pick_ideas(ctx, valuer, players, max_ideas=4, tolerance=0.30):
+    """Sell a win-now piece for draft capital.
+
+    The right move for a rebuilding dynasty roster, and the one shape the
+    player-for-player search can never find, because it needs an asset the other
+    side values more than you do. Fires only when this roster projects in the
+    bottom third — a contender should be buying, not selling — and prices the
+    incoming picks by their original owner's projected finish, so a cellar team's
+    first is worth what it should be.
+    """
+    if ctx["format"] != "dynasty" or ctx["trades_disabled"] or not ctx["my_roster"]:
+        return []
+    if not getattr(valuer, "pick_scale", None) or not valuer.pick_scale():
+        return []
+
+    pranks, _ = power_rankings(ctx, valuer, players)
+    n_teams = ctx["num_teams"] or len(pranks)
+    rank_of = {r["rid"]: r["proj_rank"] for r in pranks}
+    name_of = {t["roster_id"]: t["name"] for t in ctx["teams"]}
+    my_rid = ctx["my_roster"]["roster_id"]
+    my_rank = rank_of.get(my_rid)
+    if not my_rank or my_rank <= (2 * n_teams) / 3.0:
+        return []                                   # contending: don't sell
+
+    cur = int(ctx.get("season") or 0)
+    if not cur:
+        return []
+    inv = pick_inventory(ctx, [cur + 1, cur + 2, cur + 3])
+    scale = valuer.pick_scale()
+
+    def pick_rows(rid):
+        out = []
+        for pk in inv.get(rid, []):
+            orig = pk["original_rid"]
+            tier = pick_tier(rank_of.get(orig, n_teams), n_teams)
+            raw = valuer.pick_value(pk["season"], pk["round"], tier)
+            if not raw:
+                continue
+            suffix = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th"}.get(pk["round"],
+                                                                  f'{pk["round"]}th')
+            out.append({"id": f'PICK|{pk["season"]}|{pk["round"]}|{orig}',
+                        "name": f'{pk["season"]} {suffix} ({tier})',
+                        "pos": "PICK", "team": name_of.get(orig, "?"),
+                        "val": round(raw * scale, 1), "raw": raw})
+        return sorted(out, key=lambda r: r["raw"], reverse=True)
+
+    # what I should be selling: my most win-now-skewed pieces
+    sellable = []
+    for pid in ctx["my_roster"]["players"]:
+        pid = str(pid)
+        skew = valuer.win_now_skew(pid)
+        raw = valuer.raw_value(pid)
+        if skew is None or skew < 1.10 or not raw:
+            continue
+        sellable.append({**pinfo(pid, players), "val": valuer.value(pid),
+                         "raw": raw, "skew": skew})
+    sellable.sort(key=lambda r: r["skew"] * r["raw"], reverse=True)
+    if not sellable:
+        return []
+
+    my_pids = [str(x) for x in ctx["my_roster"]["players"]]
+    base_val = _lineup_value(my_pids, ctx, valuer, players)
+    base_pts = _lineup_points(my_pids, ctx, valuer, players)
+    my_repl = _replacement(ctx, valuer, players, my_rid)
+
+    ideas = []
+    for tm in ctx["teams"]:
+        rid = tm["roster_id"]
+        if rid == my_rid:
+            continue
+        if rank_of.get(rid, n_teams) > n_teams / 2.0:
+            continue                                # only contenders buy win-now
+        theirs = pick_rows(rid)
+        if not theirs:
+            continue
+        for give in sellable[:4]:
+            # one pick, or two, landing closest to the player's value
+            combos = [[pk] for pk in theirs]
+            combos += [[theirs[i], theirs[j]]
+                       for i in range(len(theirs))
+                       for j in range(i + 1, min(len(theirs), i + 4))]
+            best = min(combos, key=lambda c: abs(sum(x["raw"] for x in c) - give["raw"]))
+            g_raw, t_raw = give["raw"], sum(x["raw"] for x in best)
+            if not t_raw or abs(g_raw - t_raw) / max(g_raw, t_raw) > tolerance:
+                continue
+            after = [x for x in my_pids if x != give["id"]]
+            ideas.append({
+                "partner": tm["name"], "partner_rid": rid,
+                "shape": f'1-for-{len(best)}',
+                "gives": [give], "gets": best,
+                "give": give, "get": best[0],
+                "give_raw": g_raw, "get_raw": t_raw,
+                "my_net": round(sum(x["val"] for x in best)
+                                - max(0.0, give["val"] - my_repl.get(give["pos"], 0.0)), 1),
+                "their_net": round(max(0.0, give["val"] - 0.0)
+                                   - sum(x["val"] for x in best), 1),
+                "lineup_delta": round(_lineup_value(after, ctx, valuer, players) - base_val, 1),
+                "their_lineup_delta": 0.0,
+                "pts_delta": round(_lineup_points(after, ctx, valuer, players) - base_pts, 1),
+                "my_pos_out": give["pos"], "my_pos_in": "PICK",
+                "fairness": round(100 - abs(g_raw - t_raw) / max(g_raw, t_raw) * 100, 0),
+                "package_adj": 0,
+                "rationale": (f'You project {my_rank} of {n_teams}, so {give["name"]} '
+                              f'is worth more to a contender than to you — the market '
+                              f'prices him {give["skew"]:.0%} of his dynasty value in '
+                              f'win-now terms. {tm["name"]} is buying.'),
+            })
+
+    seen, uniq = set(), []
+    for i in sorted(ideas, key=lambda x: x["fairness"], reverse=True):
+        k = (i["give"]["id"], tuple(x["id"] for x in i["gets"]))
+        if k in seen or i["give"]["id"] in {j["give"]["id"] for j in uniq}:
+            continue
+        seen.add(k)
         uniq.append(i)
     return uniq[:max_ideas]
 

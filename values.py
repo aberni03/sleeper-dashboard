@@ -229,6 +229,15 @@ class Valuer:
         w = TIER_DECAY[min(out, len(TIER_DECAY) - 1)]
         return int(round(base * (1 + (ratio - 1) * w)))
 
+    def win_now_skew(self, pid):
+        """Redraft value divided by dynasty value. Above 1 means the market
+        prices this player as a win-now asset — an aging back worth more to a
+        contender than to you — which is exactly what a rebuild should sell."""
+        v = self._ext.get(str(pid)) if self.mode == "external" else None
+        if not v or not v.get("raw_dyn"):
+            return None
+        return v["raw_redraft"] / v["raw_dyn"]
+
     def pick_scale(self):
         """Divisor turning a raw pick value into the internal 0-100 scale."""
         return self._picks["scale"] if self._picks else 0.0
