@@ -4,6 +4,7 @@ Username-driven so the same deploy serves you and anyone you share the link with
 import streamlit as st
 import sleeper as S
 import analysis as A
+import values as VAL
 from values import Valuer, ENABLE_EXTERNAL, pinfo
 
 st.set_page_config(page_title="Fantasy Command Center", page_icon="🏈",
@@ -579,11 +580,47 @@ def render_trade_calc():
         return sorted(rows, key=lambda r: (r["raw"], r["val"]), reverse=True)
 
     mine_rows, their_rows = rows_for(me), rows_for(partner)
+
+    # ── rookie picks (dynasty only) ──────────────────────────────────────────
+    pranks, rec_weight = A.power_rankings(ctx, v, players)
+    if ctx["format"] == "dynasty" and v.pick_scale():
+        rank_by_rid = {r["rid"]: r["proj_rank"] for r in pranks}
+        name_by_rid = {t["roster_id"]: t["name"] for t in ctx["teams"]}
+        cur = int(ctx.get("season") or data["season"])
+        seasons = [cur + 1, cur + 2, cur + 3]
+        inv = A.pick_inventory(ctx, seasons)
+        scale = v.pick_scale()
+
+        def pick_rows(team):
+            out = []
+            for pk in inv.get(team["roster_id"], []):
+                orig = pk["original_rid"]
+                tier = A.pick_tier(rank_by_rid.get(orig, ctx["num_teams"]), ctx["num_teams"])
+                raw = v.pick_value(pk["season"], pk["round"], tier)
+                if not raw:
+                    continue
+                suffix = VAL.ROUND_SUFFIX.get(pk["round"], f'{pk["round"]}th')
+                # the ORIGINAL owner sets the draft slot, so that's the name to show
+                owner_name = name_by_rid.get(orig, "?")
+                if orig != team["roster_id"]:
+                    owner_name += " (acquired)"
+                out.append({"id": f'PICK|{pk["season"]}|{pk["round"]}|{orig}',
+                            "name": f'{pk["season"]} {suffix} ({tier})',
+                            "pos": "PICK", "team": owner_name,
+                            "raw": raw, "val": round(raw * scale, 1), "pts": 0.0,
+                            "injury": None})
+            return sorted(out, key=lambda r: r["raw"], reverse=True)
+
+        mine_rows += pick_rows(me)
+        their_rows += pick_rows(partner)
+
     look = {r["id"]: r for r in mine_rows + their_rows}
 
     def label(pid):
         r = look[pid]
         tag = f'{r["raw"]:,}' if r["raw"] else "unpriced"
+        if r["pos"] == "PICK":
+            return f'🎟 {r["name"]} · {r["team"]} · {tag}'
         return f'{r["name"]} · {r["pos"]}-{r["team"]} · {tag}'
 
     s1, s2 = st.columns(2)
@@ -625,7 +662,8 @@ def render_trade_calc():
 
     # weekly lineup impact on my roster
     my_pids = [str(x) for x in me["players"]]
-    after = [x for x in my_pids if x not in set(send)] + list(recv)
+    real = lambda ids: [x for x in ids if not str(x).startswith("PICK|")]
+    after = [x for x in my_pids if x not in set(send)] + real(recv)
 
     def lp(pids):
         lu, _ = A.optimal_lineup(pids, ctx["roster_positions"], players, v.start_score)
@@ -648,6 +686,22 @@ def render_trade_calc():
         f'&nbsp;&nbsp;·&nbsp;&nbsp; Week {data["week"]} projected lineup: '
         f'<b>{d_pts:+.1f} pts</b> (weekly, not season-long)</span></div>',
         unsafe_allow_html=True)
+
+    if ctx["format"] == "dynasty" and v.pick_scale():
+        with st.expander("Projected draft order — what sets each pick's tier"):
+            st.markdown(
+                f'<div class="note">Rookie order is reverse standings, so the projected '
+                f'<b>worst</b> team owns the <b>Early</b> (most valuable) pick. Projection blends '
+                f'roster value with record; record currently carries <b>{rec_weight*100:.0f}%</b> '
+                f'of the weight and grows as games are played.</div>', unsafe_allow_html=True)
+            for r in reversed(pranks):
+                tier = A.pick_tier(r["proj_rank"], ctx["num_teams"])
+                me_c = " me" if r["is_mine"] else ""
+                st.markdown(
+                    f'<div class="srow{me_c}"><div class="rk">{ctx["num_teams"] - r["proj_rank"] + 1}</div>'
+                    f'<div class="tn">{esc(r["name"])}</div>'
+                    f'<div class="rec">{esc(r["record"])}</div>'
+                    f'<div class="pf">{esc(tier)}</div></div>', unsafe_allow_html=True)
 
     if len(send) != len(recv) and send and recv:
         st.markdown(f'<div class="note">📦 <b>{len(send)}-for-{len(recv)}</b> — the side '

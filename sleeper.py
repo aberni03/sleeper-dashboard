@@ -131,6 +131,17 @@ def projections(season, week, scoring="ppr"):
 
 
 # ── format helpers ────────────────────────────────────────────────────────────
+@cache(ttl=1800)
+def traded_picks(league_id):
+    """Rookie picks that have changed hands.
+
+    Each entry is {round, season, roster_id, owner_id, previous_owner_id} where
+    roster_id is the pick's ORIGINAL owner (which is what sets its draft slot)
+    and owner_id is who holds it now.
+    """
+    return _get(f"{API}/league/{league_id}/traded_picks", default=[]) or []
+
+
 def league_format(league):
     """Return one of: 'dynasty', 'keeper', 'guillotine', 'redraft'."""
     s = league.get("settings", {}) or {}
@@ -231,6 +242,10 @@ def build_context(league, viewer_user_id):
         "waiver_budget": league.get("settings", {}).get("waiver_budget"),
         "trade_deadline": league.get("settings", {}).get("trade_deadline"),
         "trades_disabled": bool(league.get("settings", {}).get("disable_trades")),
+        "season": league.get("season"),
+        "draft_rounds": (league.get("settings", {}) or {}).get("draft_rounds") or 4,
+        # future rookie picks are only a dynasty asset — skip the call otherwise
+        "traded_picks": traded_picks(lid) if league_format(league) == "dynasty" else [],
         "teams": teams,
         "standings": teams_sorted,
         "my_roster": my_roster,

@@ -217,6 +217,82 @@ def waiver_targets(ctx, valuer, players, trend_add, limit=12, shortlist=45):
     return out[:limit]
 
 
+# ── projected standings & rookie picks ────────────────────────────────────────
+def power_rankings(ctx, valuer, players):
+    """Project where each team finishes — which is what sets rookie draft order.
+
+    Blends roster asset value with actual record. In September a 1-0 record says
+    almost nothing and roster strength says almost everything; by November it's
+    the reverse, so the record's weight grows with games played rather than being
+    fixed. Returns rows sorted best -> worst with a proj_rank.
+    """
+    teams, _ = positional_strength(ctx, valuer, players)
+    rows = []
+    for t in ctx["teams"]:
+        rid = t["roster_id"]
+        g = t["wins"] + t["losses"] + t["ties"]
+        rows.append({"rid": rid, "name": t["name"], "is_mine": t["is_mine"],
+                     "strength": teams[rid]["total"], "games": g,
+                     "winpct": ((t["wins"] + 0.5 * t["ties"]) / g) if g else 0.5,
+                     "record": f'{t["wins"]}-{t["losses"]}' + (f'-{t["ties"]}' if t["ties"] else "")})
+    top = max((r["strength"] for r in rows), default=0) or 1
+    played = max((r["games"] for r in rows), default=0)
+    w = min(played / 10.0, 0.65)              # record tops out at 65% of the blend
+    for r in rows:
+        r["score"] = round((1 - w) * (r["strength"] / top) + w * r["winpct"], 4)
+    rows.sort(key=lambda r: r["score"], reverse=True)
+    for i, r in enumerate(rows, 1):
+        r["proj_rank"] = i
+    return rows, round(w, 2)
+
+
+def pick_tier(proj_rank, num_teams):
+    """Early / Mid / Late for a pick, from its original owner's projected finish.
+
+    Draft order is reverse standings: the projected worst team picks first, so
+    ITS pick is the Early (most valuable) one. Split into thirds.
+    """
+    if not num_teams:
+        return None
+    from_bottom = num_teams - proj_rank + 1          # 1 = projected worst team
+    third = max(1, round(num_teams / 3))
+    if from_bottom <= third:
+        return "Early"
+    if from_bottom <= 2 * third:
+        return "Mid"
+    return "Late"
+
+
+def pick_inventory(ctx, seasons):
+    """Who currently holds which future rookie pick.
+
+    Every roster starts owning its own pick in every round of every season; the
+    traded_picks feed then reassigns the ones that moved. A pick's VALUE tracks
+    its original owner (that's whose finish sets the draft slot), while its
+    OWNER is who can trade it.
+    """
+    rounds = range(1, (ctx.get("draft_rounds") or 4) + 1)
+    holder = {}
+    for t in ctx["teams"]:
+        for yr in seasons:
+            for rnd in rounds:
+                holder[(yr, rnd, t["roster_id"])] = t["roster_id"]
+    for tp in ctx.get("traded_picks") or []:
+        try:
+            key = (int(tp["season"]), int(tp["round"]), int(tp["roster_id"]))
+            new_owner = int(tp["owner_id"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if key in holder:
+            holder[key] = new_owner
+    inv = {}
+    for (yr, rnd, original), owner in holder.items():
+        inv.setdefault(owner, []).append({"season": yr, "round": rnd, "original_rid": original})
+    for rows in inv.values():
+        rows.sort(key=lambda r: (r["season"], r["round"]))
+    return inv
+
+
 # ── team strength (for trades) ────────────────────────────────────────────────
 def positional_strength(ctx, valuer, players):
     """Per-team value totals by position + starter-quality, plus league averages."""

@@ -12,6 +12,7 @@ app is fully functional either way.
 
 Weekly projections come from Sleeper's own endpoint via the data layer."""
 import math
+import re
 import sleeper as S
 
 ENABLE_EXTERNAL = True           # set False to run entirely offline on the proxy
@@ -63,6 +64,57 @@ FC_URL = "https://api.fantasycalc.com/values/current"
 
 
 @S.cache(ttl=6 * 3600)
+def _fc_rows(superflex, num_teams, ppr):
+    """Raw FantasyCalc payload. Shared by fantasy_values() and pick_values() so
+    players and rookie picks cost a single request."""
+    import requests
+    url = (f"{FC_URL}?isDynasty=true&numQbs={2 if superflex else 1}"
+           f"&numTeams={num_teams}&ppr={ppr}")
+    try:
+        return requests.get(url, timeout=15).json() or []
+    except Exception:
+        return []
+
+
+_PICK_RE = re.compile(r"^(\d{4})\s+(\d)(?:st|nd|rd|th)(?:\s+\((Early|Mid|Late)\))?$")
+ROUND_SUFFIX = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 5: "5th", 6: "6th", 7: "7th"}
+
+
+@S.cache(ttl=6 * 3600)
+def pick_values(superflex, num_teams, ppr):
+    """Rookie-pick prices, split into generic and tier-specific lookups.
+
+    FantasyCalc only tiers the next draft class (Early/Mid/Late on 2027 at time
+    of writing); later years are priced generically because nobody knows who will
+    be picking where. Returns {"generic", "tiered", "tier_season", "scale"}.
+    """
+    generic, tiered = {}, {}
+    rows = _fc_rows(superflex, num_teams, ppr)
+    top = max((r.get("value") or 0) for r in rows) if rows else 1
+    for r in rows:
+        pl = r.get("player") or {}
+        if pl.get("position") != "PICK":
+            continue
+        m = _PICK_RE.match((pl.get("name") or "").strip())
+        if not m:
+            continue
+        year, rnd, tier = int(m.group(1)), int(m.group(2)), m.group(3)
+        val = r.get("value") or 0
+        if tier:
+            tiered[(year, rnd, tier)] = val
+        else:
+            generic[(year, rnd)] = val
+    tier_season = min((y for y, _, _ in tiered), default=None)
+    return {"generic": generic, "tiered": tiered, "tier_season": tier_season,
+            "scale": 99.0 / (top or 1)}
+
+
+# How much of the Early/Mid/Late spread to trust N drafts out. The next class is
+# taken at face value; beyond that, today's standings say less and less about who
+# will be picking where, so the tier effect decays toward the generic price.
+TIER_DECAY = (1.0, 0.5, 0.25)
+
+
 def fantasy_values(superflex, num_teams, ppr):
     """FantasyCalc current values, keyed by Sleeper player id.
 
@@ -82,13 +134,7 @@ def fantasy_values(superflex, num_teams, ppr):
     Note: FantasyCalc has no TEP parameter, so tight-end premium isn't reflected
     here — it's format-aware for superflex, team count and PPR only.
     """
-    import requests
-    url = (f"{FC_URL}?isDynasty=true&numQbs={2 if superflex else 1}"
-           f"&numTeams={num_teams}&ppr={ppr}")
-    try:
-        rows = requests.get(url, timeout=15).json()
-    except Exception:
-        return {}
+    rows = _fc_rows(superflex, num_teams, ppr)
     if not rows:
         return {}
 
@@ -128,10 +174,14 @@ class Valuer:
         self.proj = projections or {}
         self.mode = "external" if ENABLE_EXTERNAL else "proxy"
         self._ext = {}
+        self._picks = None
         if ENABLE_EXTERNAL:
             lg = ctx["league"]
             rec = (lg.get("scoring_settings", {}) or {}).get("rec", 0)
-            self._ext = fantasy_values(ctx["superflex"], ctx["num_teams"] or 12, rec)
+            nteams = ctx["num_teams"] or 12
+            self._ext = fantasy_values(ctx["superflex"], nteams, rec)
+            if ctx["format"] == "dynasty":
+                self._picks = pick_values(ctx["superflex"], nteams, rec)
         self.dynasty = ctx["format"] == "dynasty"
 
     def value(self, pid):
@@ -141,6 +191,40 @@ class Valuer:
             if v:
                 return v["dyn"] if self.dynasty else v["redraft"]
         return proxy_value(pid, self.players)          # K/DEF/deep bench, or API down
+
+    def pick_value(self, season, rnd, tier):
+        """FantasyCalc value for one rookie pick, tier-adjusted.
+
+        An exact tiered price is used when FantasyCalc publishes one. Otherwise
+        the tier's premium/discount is carried over from the class that IS tiered
+        and decayed by how many drafts away it is — a 2029 1st from a projected
+        cellar team is worth more than a generic 2029 1st, but far less
+        confidently than a 2027 one.
+        """
+        pv = self._picks
+        if not pv:
+            return 0
+        exact = pv["tiered"].get((season, rnd, tier))
+        if exact is not None:
+            return exact
+        base = pv["generic"].get((season, rnd))
+        if base is None:
+            return 0
+        ts = pv["tier_season"]
+        if not ts or tier is None:
+            return base
+        ref_t = pv["tiered"].get((ts, rnd, tier))
+        ref_g = pv["generic"].get((ts, rnd))
+        if not ref_t or not ref_g:
+            return base
+        ratio = ref_t / ref_g
+        out = max(0, season - ts)
+        w = TIER_DECAY[min(out, len(TIER_DECAY) - 1)]
+        return int(round(base * (1 + (ratio - 1) * w)))
+
+    def pick_scale(self):
+        """Divisor turning a raw pick value into the internal 0-100 scale."""
+        return self._picks["scale"] if self._picks else 0.0
 
     def raw_value(self, pid):
         """FantasyCalc's own value on their native scale — the number to show a
