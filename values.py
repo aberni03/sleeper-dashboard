@@ -17,6 +17,12 @@ import sleeper as S
 
 ENABLE_EXTERNAL = True           # set False to run entirely offline on the proxy
 
+# How much the FantasyPros cross-position board moves a lineup decision. At 0 the
+# lineup is pure Sleeper projections; at 1 it is pure expert consensus. The point
+# of blending: a bench player projected 2 points lower but 20 spots higher on the
+# consensus board is a legitimate start, and projections alone never surface him.
+FP_BLEND = 0.35
+
 SKILL = {"QB", "RB", "WR", "TE"}
 FLEX_ELIG = {
     "QB": {"QB"}, "RB": {"RB"}, "WR": {"WR"}, "TE": {"TE"},
@@ -261,6 +267,12 @@ class Valuer:
         digits = "".join(ch for ch in str(pr) if ch.isdigit())
         return int(digits) if digits else None
 
+    def fp_overall(self, pid):
+        """Cross-position consensus rank (FLEX board, or superflex where QBs
+        count). This is the only rank that makes RB20 vs WR22 comparable."""
+        row = self.fp_idx.get(str(pid))
+        return (row or {}).get("overall")
+
     def confidence(self, pid):
         """How settled the experts are on this player, from their spread.
         Projections cannot express this — one number never shows dissent."""
@@ -270,7 +282,24 @@ class Valuer:
             return None
         return "high" if sd <= 2.0 else "medium" if sd <= 5.0 else "low"
 
+    def fp_points(self, pid):
+        """Consensus rank expressed on a points-like scale so it can be weighed
+        against a projection. Overall 1 lands near 22, 70th near 8, 200th near 1."""
+        ovr = self.fp_overall(pid)
+        if not ovr:
+            return None
+        return 22.0 * math.exp(-ovr / 70.0)
+
     def start_score(self, pid):
-        """Ranking score for lineup decisions — projections if we have them, else value."""
+        """Ranking score for lineup decisions.
+
+        Blends Sleeper's projection with the FantasyPros cross-position board, so
+        a player the experts rank far higher can outrank a slightly better
+        projection. Falls back to projections alone when unranked.
+        """
         pts = self.points(pid)
-        return pts if pts > 0 else self.value(pid) / 10.0
+        base = pts if pts > 0 else self.value(pid) / 10.0
+        fp = self.fp_points(pid)
+        if fp is None or not FP_BLEND:
+            return base
+        return (1 - FP_BLEND) * base + FP_BLEND * fp

@@ -38,14 +38,16 @@ def optimal_lineup(pids, roster_positions, players, score_fn):
 
 
 # ── start / sit ───────────────────────────────────────────────────────────────
-def start_sit(ctx, valuer, players, alt_tol=0.75):
+def start_sit(ctx, valuer, players, alt_tol=1.5):
     """Compare the current starters to the optimal lineup and surface swaps.
 
     Swaps are paired BY SLOT, not by raw score: a bench player is only ever
     suggested against a starter whose slot he's actually eligible to fill, so a
     QB never shows up as a swap for an RB. Where two bench options are within a
-    hair of each other on projection, both are offered ("start B or C over A") —
-    that call is usually matchup or gut, not math.
+    hair of each other, both are offered ("start B or C over A") — that call is
+    usually matchup or gut, not math. Closeness is measured on the blended score
+    (projection + consensus), not projection alone, so a player the experts like
+    far more can surface even when he projects slightly lower.
     """
     me = ctx["my_roster"]
     if not me:
@@ -62,6 +64,7 @@ def start_sit(ctx, valuer, players, alt_tol=0.75):
         return {**pi, "slot": slot, "pts": round(valuer.points(pid), 1),
                 "val": round(valuer.value(pid), 1), "score": round(valuer.start_score(pid), 2),
                 "pos_rank": fp.get("pos_rank"), "ecr": fp.get("ecr"), "std": fp.get("std"),
+                "overall": fp.get("overall"),
                 "grade": fp.get("grade"), "opp": fp.get("opp")}
 
     lineup_rows = [row(pid, slot) for slot, pid in lineup if pid]
@@ -87,24 +90,34 @@ def start_sit(ctx, valuer, players, alt_tol=0.75):
         outgoing.discard(out)
 
         best_pts = valuer.points(pid)
+        best_score = valuer.start_score(pid)
         alts = []
-        if best_pts > 0:                      # "close" is meaningless with no projections
-            band = max(alt_tol, best_pts * 0.05)
+        if best_score > 0:
+            band = max(alt_tol, best_score * 0.08)
             alts = [b for b in bench
-                    if b != pid
+                    if b != pid and b != out          # the guy being sat isn't an option
                     and pinfo(b, players)["pos"] in elig
-                    and abs(valuer.points(b) - best_pts) <= band
-                    and valuer.points(b) > 0]
+                    and abs(valuer.start_score(b) - best_score) <= band
+                    and (valuer.points(b) > 0 or valuer.fp_overall(b))]
             # Projections are level by construction here, so ordering by them is
-            # noise. Expert consensus rank is the meaningful tiebreak.
-            alts.sort(key=lambda b: (valuer.fp_pos_rank(b) or 999, -valuer.points(b)))
+            # noise. Use the CROSS-POSITION consensus board: for a flex slot the
+            # candidates are different positions, and "RB29 vs WR29" compares
+            # nothing — one overall board is what actually ranks them.
+            alts.sort(key=lambda b: (valuer.fp_overall(b) or 9999,
+                                     valuer.fp_pos_rank(b) or 999,
+                                     -valuer.points(b)))
+        o_in, o_out = valuer.fp_overall(pid), valuer.fp_overall(out)
         swaps.append({"slot": slot,
                       "in": row(pid, slot), "out": row(out, slot),
                       "alts": [row(a, slot) for a in alts[:2]],
                       "confidence": valuer.confidence(pid),
+                      # positive = the incoming player is that many spots higher
+                      # on the consensus board; gain is the projection difference,
+                      # which may be negative when consensus drives the call
+                      "rank_delta": round(o_out - o_in) if (o_in and o_out) else None,
                       "gain": round(best_pts - valuer.points(out), 1)})
 
-    swaps.sort(key=lambda x: x["gain"], reverse=True)
+    swaps.sort(key=lambda x: (x["rank_delta"] or 0, x["gain"]), reverse=True)
     return {
         "lineup": lineup_rows,
         "bench": sorted(bench_rows, key=lambda r: r["score"], reverse=True),

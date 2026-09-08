@@ -135,10 +135,40 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
 .ai .why{color:#7e8db0;font-size:11px;display:block;margin-top:1px;line-height:1.35;}
 .ai .alt{color:var(--grn);font-weight:600;}
 .ai .qt{color:#7e8db0;font-weight:700;}
+.ai .pr{color:#7e8db0;font-size:10.5px;font-weight:600;}
+.swap .side .pr{color:#7e8db0;font-size:11px;font-weight:600;}
 .ai .sl{color:#8ea0c4;font-weight:800;font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-right:4px;}
 .prow .whyline{color:#7e8db0;font-size:10.5px;font-weight:600;display:block;margin-top:2px;}
 .swap .side .alt{color:var(--grn);font-weight:600;font-size:12.5px;}
 .swap .slotk{position:absolute;}
+/* leagues tab: team table */
+.thead2{display:grid;grid-template-columns:34px 1fr 76px 78px 78px 72px;gap:10px;padding:0 14px 5px;
+  color:var(--mut);font-size:10px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;}
+.trow{display:grid;grid-template-columns:34px 1fr 76px 78px 78px 72px;gap:10px;align-items:center;
+  background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);
+  border-radius:9px;padding:8px 14px;margin-bottom:4px;font-size:13px;}
+.trow.me{border-color:var(--grn);box-shadow:0 0 0 1px rgba(25,229,155,.25) inset;}
+.trow .rk{color:var(--mut);font-weight:800;text-align:center;}
+.trow .tn{color:#eef3fc;font-weight:700;} .trow.me .tn{color:var(--grn);}
+.trow .c{color:#c7d2ea;text-align:center;font-weight:700;}
+.trow .n{color:var(--mut);text-align:right;font-family:'JetBrains Mono',monospace;}
+.trow .n.g{color:var(--grn);} .trow .n.r{color:var(--red);}
+/* leagues tab: lineup with consensus */
+.lhead{display:grid;grid-template-columns:66px 1fr 44px 66px 60px 52px;gap:10px;padding:0 14px 5px;
+  color:var(--mut);font-size:10px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;}
+.lrow{display:grid;grid-template-columns:66px 1fr 44px 66px 60px 52px;gap:10px;align-items:center;
+  background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);
+  border-left:3px solid #23324f;border-radius:10px;padding:9px 14px;margin-bottom:5px;font-size:13px;}
+.lrow.st{border-left-color:var(--grn);} .lrow.be{border-left-color:#39415a;opacity:.92;}
+.lrow .slot{color:var(--mut);font-size:11px;font-weight:800;text-transform:uppercase;}
+.lrow .nm{color:#fff;font-weight:700;}
+.lrow .nm .tm{color:var(--mut);font-weight:600;font-size:11px;margin-left:6px;}
+.lrow .nm .inj{color:var(--red);font-weight:800;font-size:10px;margin-left:6px;}
+.lrow .pos{color:#b9c6e3;font-weight:700;text-align:center;}
+.lrow .rank{color:#cdd7ee;font-weight:800;text-align:center;font-size:12px;}
+.lrow .rank .sd{display:block;color:#5b688a;font-size:9.5px;font-weight:600;letter-spacing:.2px;}
+.lrow .pts{color:#fff;font-weight:800;text-align:right;font-family:'JetBrains Mono',monospace;}
+.lrow .gr{text-align:center;font-weight:800;font-size:11px;color:#8ea0c4;}
 /* trade calculator */
 .verdict{border-radius:14px;padding:13px 18px;margin:10px 0 4px;font-size:14px;font-weight:800;
   border:1px solid var(--line);background:linear-gradient(160deg,var(--card),var(--card2));}
@@ -212,25 +242,22 @@ def fp_for(ctx):
     if not FP.ENABLE_FP:
         return {}
     rec = (ctx["league"].get("scoring_settings", {}) or {}).get("rec", 0)
-    slug = FP.scoring_slug(rec)
+    slug = (FP.scoring_slug(rec), bool(ctx["superflex"]))
     if slug not in _fp_cache:
         try:
-            _fp_cache[slug] = FP.by_sleeper_id(slug, data["week"])["by_id"]
+            _fp_cache[slug] = FP.by_sleeper_id(slug[0], data["week"], slug[1])["by_id"]
         except Exception:
             _fp_cache[slug] = {}
     return _fp_cache[slug]
 
 # status line — flat, in the masthead's rhythm rather than another card
 ndyn, nrd = len(data["groups"]["dynasty"]), len(data["groups"]["redraft"])
-vmode = ('Values <span class="on">FantasyCalc</span>' if ENABLE_EXTERNAL
-         else 'Values <b>rank proxy</b>')
 st.markdown(
     f'<div class="statusline">'
     f'<span>👤 <b>{esc(data["user"]["display_name"])}</b></span>'
     f'<span>{data["season"]} · Week <b>{data["week"]}</b></span>'
     f'<span><b>{len(data["contexts"])}</b> leagues · {ndyn} dynasty · {nrd} redraft</span>'
     f'<span>Projections <span class="on">live</span></span>'
-    f'<span>{vmode}</span>'
     f'</div>', unsafe_allow_html=True)
 
 # ── per-league compute (cached objects are cheap; done once per render) ────────
@@ -262,18 +289,34 @@ def render_rankings():
                     unsafe_allow_html=True)
         return
 
-    scorings = {}
-    for ctx in data["contexts"]:
-        rec = (ctx["league"].get("scoring_settings", {}) or {}).get("rec", 0)
-        scorings.setdefault(FP.scoring_slug(rec), []).append(ctx["name"])
     labels = {"ppr": "Full PPR", "half-point-ppr": "Half PPR", "": "Standard"}
-    opts = [labels.get(k, k or "Standard") for k in scorings]
-    picked = st.pills("Scoring", opts, default=opts[0], key="rk_scoring",
-                      label_visibility="collapsed") or opts[0]
-    slug = next(k for k in scorings if labels.get(k, "Standard") == picked)
+
+    # League first: "my players" and "available" only mean anything inside one
+    # league, since rosters differ. Picking a league also settles the scoring
+    # format, because that's what decides which ranking set applies.
+    lg_opts = ["All leagues"] + [c["name"] for c in data["contexts"]]
+    lg_pick = st.pills("League", lg_opts, default="All leagues", key="rk_league",
+                       label_visibility="collapsed") or "All leagues"
+    scope = None if lg_pick == "All leagues" else \
+        next((c for c in data["contexts"] if c["name"] == lg_pick), None)
+
+    if scope is not None:
+        rec = (scope["league"].get("scoring_settings", {}) or {}).get("rec", 0)
+        slug = FP.scoring_slug(rec)
+        picked = labels.get(slug, "Standard")
+    else:
+        scorings = {}
+        for ctx in data["contexts"]:
+            r = (ctx["league"].get("scoring_settings", {}) or {}).get("rec", 0)
+            scorings.setdefault(FP.scoring_slug(r), []).append(ctx["name"])
+        opts = [labels.get(k, k or "Standard") for k in scorings]
+        picked = st.pills("Scoring", opts, default=opts[0], key="rk_scoring",
+                          label_visibility="collapsed") or opts[0]
+        slug = next(k for k in scorings if labels.get(k, "Standard") == picked)
 
     with st.spinner("Loading expert consensus…"):
-        idx = FP.by_sleeper_id(slug, data["week"])
+        idx = FP.by_sleeper_id(slug, data["week"],
+                               bool(scope["superflex"]) if scope is not None else False)
     rows = idx["by_id"]
     if not rows:
         st.markdown(f'<div class="note">No consensus published for week '
@@ -281,37 +324,61 @@ def render_rankings():
                     'week approaches.</div>', unsafe_allow_html=True)
         return
 
-    # who do I roster, and who is actually available?
+    # roster membership, scoped to the chosen league (or pooled across all)
     mine, rostered = set(), set()
-    for ctx in data["contexts"]:
+    for ctx in ([scope] if scope is not None else data["contexts"]):
         for t in ctx["teams"]:
             for pid in t["players"]:
                 rostered.add(str(pid))
                 if t["is_mine"]:
                     mine.add(str(pid))
 
-    n_exp_note = f'{len(rows)} players · week {data["week"]} · {esc(picked)}'
+    where = (f'<b>{esc(lg_pick)}</b>' if scope is not None
+             else f'all {len(data["contexts"])} leagues')
+    sf = bool(scope["superflex"]) if scope is not None else False
+    board_name = "superflex" if sf else "flex"
+    qb_note = ("" if sf else
+               " — QBs have no flex rank in a 1QB league, which is correct: you "
+               "never start one in a flex slot")
     st.markdown(f'<div class="note">Expert consensus from FantasyPros — '
-                f'{n_exp_note}. <b>SD</b> is how much the experts disagree: near '
-                'zero means the room is unanimous, high means the call is a '
-                'coin flip.</div>', unsafe_allow_html=True)
+                f'{len(rows)} players · week {data["week"]} · {esc(picked)} · '
+                f'roster status from {where}.<br><b>Ovr</b> is the {esc(board_name)} '
+                'board, which ranks positions against each other so RB20 and WR22 '
+                f'are comparable{qb_note}. <b>SD</b> in the table is expert '
+                'disagreement on that player — near zero is unanimous, high means '
+                'the call is a coin flip.</div>', unsafe_allow_html=True)
 
-    c1, c2 = st.columns([2, 3])
-    pos_pick = c1.pills("Position", ["All", "QB", "RB", "WR", "TE"], default="All",
-                        key="rk_pos", label_visibility="collapsed") or "All"
-    who = c2.pills("Roster", ["Everyone", "My players", "Available"], default="Everyone",
-                   key="rk_who", label_visibility="collapsed") or "Everyone"
+    # Roster cuts only mean something inside one league — "available" across a
+    # pool of five different rosters isn't a real category — so they appear only
+    # once a league is chosen.
+    if scope is not None:
+        c1, c2 = st.columns([2, 3])
+        pos_pick = c1.pills("Position", ["All", "QB", "RB", "WR", "TE"], default="All",
+                            key="rk_pos", label_visibility="collapsed") or "All"
+        who = c2.pills("Roster", ["Everyone", "My players", "Available"],
+                       default="Everyone", key="rk_who",
+                       label_visibility="collapsed") or "Everyone"
+    else:
+        pos_pick = st.pills("Position", ["All", "QB", "RB", "WR", "TE"], default="All",
+                            key="rk_pos", label_visibility="collapsed") or "All"
+        who = "Everyone"
 
     recs = []
     for pid, d in rows.items():
         if pos_pick != "All" and d["pos"] != pos_pick:
             continue
-        if who == "My players" and pid not in mine:
+        if who.startswith("My players") and pid not in mine:
             continue
-        if who == "Available" and pid in rostered:
+        if who.startswith("Available") and pid in rostered:
             continue
         recs.append((pid, d))
-    recs.sort(key=lambda x: (x[1]["ecr"] if x[1]["ecr"] is not None else 9999))
+    # Across positions the overall board is the meaningful order; within one
+    # position they agree, so this sorts correctly either way.
+    # Order by the league's own cross-position board; anything it doesn't rank
+    # (QBs in a 1QB league) falls to the bottom, ordered by positional ECR.
+    recs.sort(key=lambda x: (x[1].get("overall") if x[1].get("overall") is not None
+                             else 9999,
+                             x[1]["ecr"] if x[1]["ecr"] is not None else 9999))
 
     if not recs:
         st.markdown('<div class="empty">Nothing matches that filter.</div>',
@@ -320,7 +387,8 @@ def render_rankings():
 
     import pandas as pd
     df = pd.DataFrame([{
-        "Rank": d["pos_rank"], "Player": d["name"], "Tm": d["team"],
+        "Ovr": d.get("overall"), "Rank": d["pos_rank"], "Player": d["name"],
+        "Tm": d["team"],
         "Opp": (d["opp"] or "").replace("vs. ", "vs "), "ECR": d["ecr"],
         "Best": d["best"], "Worst": d["worst"], "SD": d["std"],
         "Grade": d["grade"], "Rostered%": d["owned"],
@@ -328,6 +396,9 @@ def render_rankings():
     } for pid, d in recs])
     st.dataframe(df, width="stretch", hide_index=True, height=560,
                  column_config={
+                     "Ovr": st.column_config.NumberColumn(
+                         "Ovr", help="Cross-position rank — compares RB20 vs WR22",
+                         format="%d"),
                      "SD": st.column_config.NumberColumn(
                          "SD", help="Expert disagreement — low is settled", format="%.2f"),
                      "Rostered%": st.column_config.NumberColumn(format="%.0f%%"),
@@ -365,42 +436,83 @@ def render_leagues_overview():
         col.markdown(f'<div class="kpi{" on" if on else ""}"><div class="n {cls}">{n}</div>'
                      f'<div class="l">{esc(lab)}</div></div>', unsafe_allow_html=True)
 
-    for ctx in ctxs:
-        me = ctx["my_roster"]
-        row = next((x for x in ctx["standings"] if x["is_mine"]), None)
-        klass = "dyn" if ctx["format"] == "dynasty" else "rd"
-        rec = ((f'{me["wins"]}-{me["losses"]}' + (f'-{me["ties"]}' if me["ties"] else ""))
-               if me else "—")
-        badges = f'<span class="badge {klass}">{esc(ctx["format"].upper())}</span>'
-        if ctx["superflex"]:
-            badges += ' <span class="badge sf">SUPERFLEX</span>'
-        if ctx["trades_disabled"]:
-            badges += ' <span class="badge off">NO TRADES</span>'
-        rank_txt = f'{row["rank"]} of {ctx["num_teams"]}' if row else "—"
-        budget = ctx.get("waiver_budget")
-        extras = [f'{ctx["num_teams"]} teams', esc(ctx["scoring_label"])]
-        if budget:
-            used = me.get("waiver_budget_used", 0) if me else 0
-            extras.append(f"FAAB {budget - used} of {budget} left")
-        if ctx.get("trade_deadline"):
-            extras.append(f'trade deadline wk {ctx["trade_deadline"]}')
-        starters = [x for x in ctx["roster_positions"] if x not in ("BN", "IR", "TAXI")]
+    pick = st.pills("League", [c["name"] for c in ctxs], default=ctxs[0]["name"],
+                    key="lg_pick", label_visibility="collapsed") or ctxs[0]["name"]
+    ctx = next(c for c in ctxs if c["name"] == pick)
+    me = ctx["my_roster"]
 
+    badges = f'<span class="badge {"dyn" if ctx["format"] == "dynasty" else "rd"}">' \
+             f'{esc(ctx["format"].upper())}</span>'
+    if ctx["superflex"]:
+        badges += ' <span class="badge sf">SUPERFLEX</span>'
+    if ctx["trades_disabled"]:
+        badges += ' <span class="badge off">NO TRADES</span>'
+    bits = [f'{ctx["num_teams"]} teams', esc(ctx["scoring_label"])]
+    if ctx.get("waiver_budget"):
+        used = me.get("waiver_budget_used", 0) if me else 0
+        bits.append(f'FAAB {ctx["waiver_budget"] - used} of {ctx["waiver_budget"]} left')
+    if ctx.get("trade_deadline"):
+        bits.append(f'trade deadline wk {ctx["trade_deadline"]}')
+    st.markdown(f'<div class="note">{badges} &nbsp; {" · ".join(bits)}</div>',
+                unsafe_allow_html=True)
+
+    # ── season to date, with projected finish ────────────────────────────────
+    v = valuer_for(ctx)
+    pranks, rec_weight = A.power_rankings(ctx, v, players)
+    proj_rank = {r["rid"]: r["proj_rank"] for r in pranks}
+
+    hdr(f"Team rankings · season to date")
+    st.markdown('<div class="thead2"><div>#</div><div>TEAM</div><div>RECORD</div>'
+                '<div>PF</div><div>PA</div><div>PROJ</div></div>', unsafe_allow_html=True)
+    for tm in ctx["standings"]:
+        recs = f'{tm["wins"]}-{tm["losses"]}' + (f'-{tm["ties"]}' if tm["ties"] else "")
+        diff = tm["fpts"] - tm["fpts_against"]
+        pr = proj_rank.get(tm["roster_id"], "—")
         st.markdown(
-            f'<div class="lgcard {klass}"><h3>{esc(ctx["name"])} {badges}</h3>'
-            f'<div class="meta">{" · ".join(extras)}</div>'
-            f'<div class="mv"><div class="i">Record <b>{rec}</b> &nbsp;·&nbsp; '
-            f'Rank <b>{rank_txt}</b> &nbsp;·&nbsp; '
-            f'PF <b>{me["fpts"]:,.1f}</b> &nbsp;·&nbsp; '
-            f'PA <b>{me["fpts_against"]:,.1f}</b></div></div>'
-            f'<div class="meta" style="margin-top:6px">Starters: '
-            f'{esc(" · ".join(starters))}</div></div>' if me else
-            f'<div class="lgcard {klass}"><h3>{esc(ctx["name"])} {badges}</h3>'
-            f'<div class="meta">{" · ".join(extras)}</div></div>',
+            f'<div class="trow{" me" if tm["is_mine"] else ""}">'
+            f'<div class="rk">{tm["rank"]}</div><div class="tn">{esc(tm["name"])}</div>'
+            f'<div class="c">{recs}</div>'
+            f'<div class="n">{tm["fpts"]:,.1f}</div>'
+            f'<div class="n">{tm["fpts_against"]:,.1f}</div>'
+            f'<div class="n {"g" if diff >= 0 else "r"}">{pr}</div></div>',
             unsafe_allow_html=True)
+    st.markdown(f'<div class="note">PROJ is projected finish — roster value blended '
+                f'with record, record currently weighted <b>{rec_weight*100:.0f}%</b> '
+                f'and rising as games are played.</div>', unsafe_allow_html=True)
 
-        with st.expander(f'Standings — {ctx["name"]}'):
-            render_overview(ctx)
+    # ── my lineup, with this week's expert consensus alongside ───────────────
+    if not me:
+        st.markdown('<div class="empty">You have no roster in this league.</div>',
+                    unsafe_allow_html=True)
+        return
+    ss = A.start_sit(ctx, v, players)
+    if not ss:
+        return
+
+    hdr(f'Your lineup · Week {data["week"]} · projected {ss["proj_total"]:.1f}')
+    st.markdown('<div class="lhead"><div>SLOT</div><div>PLAYER</div><div>POS</div>'
+                '<div>EXPERTS</div><div>PROJ</div><div>GRADE</div></div>',
+                unsafe_allow_html=True)
+
+    def lineup_row(r, klass, slot=None):
+        rank = "—"
+        if r.get("pos_rank"):
+            sd = f'<span class="sd">sd {r["std"]:.1f}</span>' if r.get("std") is not None else ""
+            rank = f'{esc(r["pos_rank"])}{sd}'
+        pts = f'{r["pts"]:.1f}' if r["pts"] else "—"
+        return (f'<div class="lrow {klass}"><div class="slot">{esc(slot or r.get("slot") or "")}</div>'
+                f'<div class="nm">{esc(r["name"])}<span class="tm">{esc(r["team"])}</span>'
+                f'{inj_tag(r)}</div>'
+                f'<div class="pos">{esc(r["pos"])}</div>'
+                f'<div class="rank">{rank}</div>'
+                f'<div class="pts">{pts}</div>'
+                f'<div class="gr">{esc(r.get("grade") or "—")}</div></div>')
+
+    st.markdown("".join(lineup_row(r, "st") for r in ss["lineup"]), unsafe_allow_html=True)
+    if ss["bench"]:
+        hdr("Bench")
+        st.markdown("".join(lineup_row(r, "be", "BN") for r in ss["bench"]),
+                    unsafe_allow_html=True)
 
 
 # ── per-league deep dive ──────────────────────────────────────────────────────
@@ -453,7 +565,6 @@ def render_stat_rail():
         ("Win %", f"{pct:.0f}%", "g" if pct >= 50 else "a"),
         ("Lineup moves", str(n_moves), "c"),
         ("Trade ideas", str(n_trades), "a"),
-        ("Leagues", f"{len(data['contexts'])}", "v"),
     ]
     inner = "".join(f'<div class="it"><span class="k">{esc(k)}</span>'
                     f'<span class="v {c}">{esc(v)}</span></div>' for k, v, c in items)
@@ -506,12 +617,27 @@ def render_action_center():
         st.markdown(f'<div class="lane"><div class="lh {cls}">{title}</div>{body}</div>',
                     unsafe_allow_html=True)
 
+    def rank_tag(r):
+        """This week's expert positional rank, e.g. (RB11)."""
+        return f' <span class="pr">({esc(r["pos_rank"])})</span>' if r.get("pos_rank") else ""
+
+    def deltas(sw):
+        """What the swap buys and what it costs, side by side."""
+        bits = []
+        if sw.get("rank_delta"):
+            bits.append(f'{sw["rank_delta"]:+d} spots')
+        if abs(sw["gain"]) >= 0.05:
+            bits.append(f'{sw["gain"]:+.1f} proj')
+        return f' <span class="qt">{esc(" · ".join(bits))}</span>' if bits else ""
+
     def swap_item(sw):
-        alt = "".join(f' <span class="alt">or {esc(a["name"])}</span>' for a in sw["alts"])
-        gain = f' <span class="qt">+{sw["gain"]:.1f}</span>' if sw["gain"] > 0 else ""
+        alt = "".join(f' <span class="alt">or {esc(a["name"])}</span>{rank_tag(a)}'
+                      for a in sw["alts"])
+        gain = deltas(sw)
         return (f'<span class="ai"><span class="txt"><span class="sl">{esc(sw["slot"])}</span>'
-                f'Start <b class="g">{esc(sw["in"]["name"])}</b>{alt} '
-                f'over <span class="r">{esc(sw["out"]["name"])}</span>{gain}</span></span>')
+                f'Start <b class="g">{esc(sw["in"]["name"])}</b>{rank_tag(sw["in"])}{alt} '
+                f'over <span class="r">{esc(sw["out"]["name"])}</span>'
+                f'{rank_tag(sw["out"])}{gain}</span></span>')
 
     def waiver_item(w):
         return (f'<span class="ai"><span class="txt">Add <b>{esc(w["name"])}</b> '
@@ -564,17 +690,24 @@ def render_startsit(ctx):
         hdr("Recommended changes")
         for sw in ss["swaps"]:
             s_in, s_out = sw["in"], sw["out"]
+            def pr(r):
+                return f' <span class="pr">({esc(r["pos_rank"])})</span>' if r.get("pos_rank") else ""
             alt = "".join(
-                f'<div class="alt">or {esc(a["name"])} '
+                f'<div class="alt">or {esc(a["name"])}{pr(a)} '
                 f'<span class="m">{esc(a["pos"])}·{a["pts"]:.1f}</span></div>'
                 for a in sw["alts"])
-            gain = f' · +{sw["gain"]:.1f}' if sw["gain"] > 0 else ""
+            gbits = []
+            if sw.get("rank_delta"):
+                gbits.append(f'{sw["rank_delta"]:+d} spots')
+            if abs(sw["gain"]) >= 0.05:
+                gbits.append(f'{sw["gain"]:+.1f} proj')
+            gain = f' · {" · ".join(gbits)}' if gbits else ""
             st.markdown(
                 f'<div class="swap"><div class="side"><div class="k in">START · {esc(sw["slot"])}{gain}</div>'
-                f'<div class="n">{esc(s_in["name"])} <span class="m">{esc(s_in["pos"])}·{esc(s_in["team"])} '
+                f'<div class="n">{esc(s_in["name"])}{pr(s_in)} <span class="m">{esc(s_in["pos"])}·{esc(s_in["team"])} '
                 f'· {s_in["pts"]:.1f} pts</span></div>{alt}</div><div class="ar">▶</div>'
                 f'<div class="side"><div class="k out">SIT</div>'
-                f'<div class="n">{esc(s_out["name"])} <span class="m">{esc(s_out["pos"])}·{esc(s_out["team"])} '
+                f'<div class="n">{esc(s_out["name"])}{pr(s_out)} <span class="m">{esc(s_out["pos"])}·{esc(s_out["team"])} '
                 f'· {s_out["pts"]:.1f} pts</span></div></div></div>', unsafe_allow_html=True)
     elif ss["set_lineup"]:
         st.markdown('<div class="note">✅ Your lineup already matches the optimal projection.</div>', unsafe_allow_html=True)

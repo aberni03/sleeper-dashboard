@@ -45,6 +45,14 @@ def scoring_slug(rec):
     return ""                          # standard has no prefix
 
 
+def _url_overall(slug, superflex):
+    """Cross-position board: FLX ranks RB/WR/TE against each other, superflex (OP)
+    adds QB. This is the ranking that makes a flex decision answerable — RB20 vs
+    WR22 is meaningless positionally, but one of them is higher on this board."""
+    name = "superflex" if superflex else "flex"
+    return f"{BASE}/{slug}-{name}.php" if slug else f"{BASE}/{name}.php"
+
+
 def _url(pos, slug):
     # QB (and K/DST) rankings don't vary by reception scoring, and the
     # scoring-prefixed QB URL 302-redirects, so ask for the bare page.
@@ -71,7 +79,10 @@ def _namekey(name):
 
 
 def _fetch(pos, slug, week):
-    url = _url(pos, slug)
+    return _fetch_url(_url(pos, slug), week)
+
+
+def _fetch_url(url, week):
     params = {"week": week} if week else None
     try:
         r = requests.get(url, params=params, headers={"User-Agent": UA}, timeout=25)
@@ -109,7 +120,18 @@ def rankings(slug, week):
 
 
 @S.cache(ttl=3 * 3600)
-def by_sleeper_id(slug, week, _players_sig=None):
+def overall(slug, week, superflex):
+    """{normalized name+pos key: (overall_rank, std)} off the cross-position board."""
+    d = _fetch_url(_url_overall(slug, superflex), week)
+    out = {}
+    for r in (d or {}).get("players", []):
+        key = (_namekey(r.get("player_name")), r.get("player_position_id"))
+        out[key] = (_num(r.get("rank_ecr")), _num(r.get("rank_std")))
+    return out
+
+
+@S.cache(ttl=3 * 3600)
+def by_sleeper_id(slug, week, superflex=False):
     """Index FantasyPros rows onto Sleeper player ids.
 
     Matched on normalized name + position, with team as the tiebreak when a name
@@ -125,6 +147,12 @@ def by_sleeper_id(slug, week, _players_sig=None):
             filter(None, [p.get("first_name"), p.get("last_name")]))
         key = (_namekey(nm), pos)
         idx.setdefault(key, []).append((pid, (p.get("team") or "").upper()))
+
+    time.sleep(CRAWL_DELAY)
+    # One board per league: FLX ranks RB/WR/TE against each other, superflex (OP)
+    # adds QBs. A QB has no flex rank in a 1QB league and that is correct — you
+    # never start him in a flex slot there, so there is nothing to compare against.
+    ovr = overall(slug, week, superflex)
 
     out, unmatched = {}, []
     for pos, rows in rankings(slug, week).items():
@@ -150,4 +178,7 @@ def by_sleeper_id(slug, week, _players_sig=None):
                 "pos": pos,
                 "name": r.get("player_name"),
             }
+            o = ovr.get((_namekey(r.get("player_name")), pos))
+            out[pid]["overall"] = o[0] if o else None
+            out[pid]["overall_std"] = o[1] if o else None
     return {"by_id": out, "unmatched": unmatched}
