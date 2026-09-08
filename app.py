@@ -216,6 +216,22 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
 .lrow .rank .sd{display:block;color:#5b688a;font-size:9.5px;font-weight:600;letter-spacing:.2px;}
 .lrow .pts{color:#fff;font-weight:800;text-align:right;font-family:'JetBrains Mono',monospace;}
 .lrow .gr{text-align:center;font-weight:800;font-size:11px;color:#8ea0c4;}
+/* weekly matchup, side by side */
+.mhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+  padding:0 2px 7px;border-bottom:1px solid var(--line);margin-bottom:7px;}
+.mhead .nm{font-size:13.5px;font-weight:800;color:#eef3fc;}
+.mhead .nm.me{color:var(--grn);}
+.mhead .tot{font-size:15px;font-weight:900;font-family:'JetBrains Mono',monospace;color:#fff;}
+.mhead .win{font-size:10.5px;font-weight:800;color:var(--mut);margin-left:6px;}
+.mhead .win.fav{color:var(--grn);}
+.mrow{display:grid;grid-template-columns:52px 1fr 46px;gap:8px;align-items:center;
+  padding:6px 10px;margin-bottom:3px;font-size:12.5px;border-radius:8px;
+  background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);}
+.mrow .sl{color:var(--mut);font-size:10px;font-weight:800;text-transform:uppercase;}
+.mrow .nm{color:#eef3fc;font-weight:700;}
+.mrow .nm .tm{color:var(--mut);font-weight:600;font-size:10px;margin-left:5px;}
+.mrow .pt{text-align:right;font-weight:800;font-family:'JetBrains Mono',monospace;color:#fff;}
+.mrow.empty2{opacity:.45;}
 /* trade calculator: side-by-side positional strength */
 .strgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:2px 0 10px;}
 .strbox{background:linear-gradient(160deg,var(--card),var(--card2));border:1px solid var(--line);
@@ -269,6 +285,9 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
   .lhead,.lrow{grid-template-columns:42px 1fr 30px 52px 42px 38px;gap:5px;padding:8px 10px;font-size:12px;}
   .thead2,.trow{grid-template-columns:24px 1fr 54px 52px 52px 44px;gap:5px;padding:8px 10px;font-size:12px;}
   .srow{grid-template-columns:24px 1fr 54px 62px;padding:8px 10px;font-size:12px;}
+  .mrow{grid-template-columns:44px 1fr 40px;gap:6px;padding:6px 8px;font-size:11.5px;}
+  .mhead .nm{font-size:12.5px;} .mhead .tot{font-size:14px;}
+  .strgrid{grid-template-columns:1fr;}
   .lrow .rank .sd{font-size:8.5px;}
   /* two-column blocks stack */
   .trade .legs{grid-template-columns:1fr;}
@@ -575,7 +594,7 @@ def render_leagues_overview():
                 unsafe_allow_html=True)
 
     v = valuer_for(ctx)
-    sub = st.tabs(["📋 My Lineup", "📊 Team Rankings"])
+    sub = st.tabs(["📋 My Lineup", "⚔️ Matchup", "📊 Team Rankings"])
 
     # ── your lineup, with this week's consensus alongside ────────────────────
     with sub[0]:
@@ -638,8 +657,61 @@ def render_leagues_overview():
                                 '<b>FLEX</b> is the FantasyPros flex ranking.</div>',
                                 unsafe_allow_html=True)
 
-    # ── season to date, with projected finish ────────────────────────────────
+    # ── this week's matchup, side by side ────────────────────────────────────
     with sub[1]:
+        try:
+            games = A.week_matchups(ctx, v, players,
+                                    S.league_matchups(ctx["league_id"], data["week"]))
+        except Exception:
+            games = []
+        game = next((g for g in games if g["mine"]), None)
+        if not game:
+            st.markdown('<div class="empty">No matchup for you this week in this '
+                        'league.</div>', unsafe_allow_html=True)
+        else:
+            a, b = ((game["a"], game["b"]) if game["a"]["is_mine"]
+                    else (game["b"], game["a"]))
+            rows_by_rid = {r["roster_id"]: r for r in
+                           S.league_matchups(ctx["league_id"], data["week"])}
+            slots = [x for x in ctx["roster_positions"] if x not in ("BN", "IR", "TAXI")]
+
+            def side(sd):
+                row = rows_by_rid.get(sd["rid"], {})
+                starters = [str(x) if x and str(x) != "0" else None
+                            for x in (row.get("starters") or [])]
+                out = (f'<div class="mhead"><span class="nm{" me" if sd["is_mine"] else ""}">'
+                       f'{esc(sd["name"])}</span><span><span class="tot">'
+                       f'{(sd["live"] if game["live"] else sd["proj"]):.1f}</span>'
+                       f'<span class="win{" fav" if sd["win"] >= 50 else ""}">'
+                       f'{sd["win"]}%</span></span></div>')
+                for i, slot in enumerate(slots):
+                    pid = starters[i] if i < len(starters) else None
+                    if not pid:
+                        out += (f'<div class="mrow empty2"><div class="sl">{esc(slot)}</div>'
+                                f'<div class="nm">—</div><div class="pt">—</div></div>')
+                        continue
+                    pi = pinfo(pid, players)
+                    pts = v.points(pid)
+                    out += (f'<div class="mrow"><div class="sl">{esc(slot)}</div>'
+                            f'<div class="nm">{esc(pi["name"])}'
+                            f'<span class="tm">{esc(pi["pos"])}·{esc(pi["team"])}</span>'
+                            f'{inj_tag(pi)}</div>'
+                            f'<div class="pt">{pts:.1f}</div></div>')
+                return out
+
+            hdr(f'Week {data["week"]} matchup')
+            c1, c2 = st.columns(2)
+            c1.markdown(side(a), unsafe_allow_html=True)
+            c2.markdown(side(b), unsafe_allow_html=True)
+            diff = a["proj"] - b["proj"]
+            lead = "you" if diff >= 0 else esc(b["name"])
+            st.markdown(f'<div class="note">Projected {"live totals · " if game["live"] else ""}'
+                        f'edge: <b>{lead}</b> by <b>{abs(diff):.1f}</b>. Win probability '
+                        'allows for a noisy week, so a small edge is close to a coin flip.'
+                        '</div>', unsafe_allow_html=True)
+
+    # ── season to date, with projected finish ────────────────────────────────
+    with sub[2]:
         pranks, rec_weight = A.power_rankings(ctx, v, players)
         proj_rank = {r["rid"]: r["proj_rank"] for r in pranks}
         hdr("Standings · season to date")
