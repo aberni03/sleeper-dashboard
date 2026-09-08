@@ -368,7 +368,7 @@ def digest_for(ctx):
     return _DIGEST_CACHE[lid]
 
 _TRADE_CACHE = {}
-def trades_for(ctx, max_ideas=6):
+def trades_for(ctx, max_ideas=10):
     """Trade ideas per league, computed once — the global tab and the per-league
     detail view both read this."""
     lid = ctx["league_id"]
@@ -445,12 +445,16 @@ def render_rankings():
     # pool of five different rosters isn't a real category — so they appear only
     # once a league is chosen.
     if scope is not None:
-        c1, c2 = st.columns([2, 3])
-        pos_pick = c1.pills("Position", ["All", "QB", "RB", "WR", "TE"], default="All",
-                            key="rk_pos", label_visibility="collapsed") or "All"
-        who = c2.pills("Roster", ["Everyone", "My players", "Available"],
-                       default="Everyone", key="rk_who",
-                       label_visibility="collapsed") or "Everyone"
+        c1, c2 = st.columns([3, 2])
+        # "My Team" sits with the positions so picking a league then your roster
+        # is one click rather than two separate filters
+        pos_pick = c1.pills("Position", ["All", "QB", "RB", "WR", "TE", "My Team"],
+                            default="All", key="rk_pos",
+                            label_visibility="collapsed") or "All"
+        who = c2.pills("Roster", ["Everyone", "Available"], default="Everyone",
+                       key="rk_who", label_visibility="collapsed") or "Everyone"
+        if pos_pick == "My Team":
+            who = "My players"
     else:
         pos_pick = st.pills("Position", ["All", "QB", "RB", "WR", "TE"], default="All",
                             key="rk_pos", label_visibility="collapsed") or "All"
@@ -458,7 +462,7 @@ def render_rankings():
 
     recs = []
     for pid, d in rows.items():
-        if pos_pick != "All" and d["pos"] != pos_pick:
+        if pos_pick not in ("All", "My Team") and d["pos"] != pos_pick:
             continue
         if who.startswith("My players") and pid not in mine:
             continue
@@ -983,7 +987,7 @@ def render_trade_ideas_global():
         if ctx["trades_disabled"]:
             blocked.append(ctx["name"])
             continue
-        for t in trades_for(ctx):
+        for t in trades_for(ctx, max_ideas=10):
             pool.append((ctx, t))
 
     if not pool:
@@ -1026,18 +1030,27 @@ def render_trade_ideas_global():
         by_league.setdefault(ctx["name"], (ctx, []))[1].append(t)
     order = sorted(by_league.values(), key=lambda x: max(t["fairness"] for t in x[1]), reverse=True)
 
+    TOP_PER_LEAGUE = 2
     v_cache = {}
     for ctx, ideas in order:
         kind = "dynasty asset" if ctx["format"] == "dynasty" else "win-now"
         hdr(ctx["name"])
         v = v_cache.setdefault(ctx["league_id"], valuer_for(ctx))
-        for t in sorted(ideas, key=lambda x: x["my_net"], reverse=True):
+        ranked = sorted(ideas, key=lambda x: (x["lineup_delta"] + x["pts_delta"],
+                                              x["my_net"]), reverse=True)
+        for t in ranked[:TOP_PER_LEAGUE]:
             tr = v.trend30(t["get"]["id"]) if hasattr(v, "trend30") else 0
             trend = (f'<div class="why" style="margin-top:6px">30-day trend on '
                      f'{esc(t["get"]["name"])}: '
                      f'<span class="trend {"up" if tr > 0 else "dn"}">'
                      f'{"▲" if tr > 0 else "▼"} {abs(tr):,}</span></div>') if tr else ""
             st.markdown(trade_card(t, ctx, trend), unsafe_allow_html=True)
+
+        rest = ranked[TOP_PER_LEAGUE:]
+        if rest:
+            with st.expander(f"More ideas — {ctx['name']} ({len(rest)})"):
+                for t in rest:
+                    st.markdown(trade_card(t, ctx), unsafe_allow_html=True)
 
     if blocked:
         st.markdown(f'<div class="note" style="margin-top:16px">🔒 Trades disabled in: '
