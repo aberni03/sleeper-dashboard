@@ -570,7 +570,7 @@ def render_leagues_overview():
              (f"{pf - pa:+,.0f}" if played else "TBD", "Point differential",
               "g" if (played and pf >= pa) else "", False),
              (f"{(sum(ranks)/len(ranks)):.1f}" if (played and ranks) else "TBD",
-              "Average finish", "a", False)]
+              "Average standing", "a", False)]
     for col, (n, lab, cls, on) in zip(kc, tiles):
         col.markdown(f'<div class="kpi{" on" if on else ""}"><div class="n {cls}">{n}</div>'
                      f'<div class="l">{esc(lab)}</div></div>', unsafe_allow_html=True)
