@@ -6,10 +6,15 @@ import sleeper as S
 import analysis as A
 import values as VAL
 import fantasypros as FP
-from values import Valuer, ENABLE_EXTERNAL, pinfo
+from values import Valuer, ENABLE_EXTERNAL, pinfo, FLEX_ELIG
 
 st.set_page_config(page_title="Fantasy Command Center", page_icon="🏈",
                    layout="wide", initial_sidebar_state="collapsed")
+
+# Streamlit ships a viewport meta tag, but a deployed app can end up rendered at
+# desktop width on a phone if anything overrides it; assert it explicitly.
+st.markdown('<meta name="viewport" content="width=device-width, initial-scale=1">',
+            unsafe_allow_html=True)
 
 CSS = """
 <style>
@@ -160,6 +165,8 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
   background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);
   border-left:3px solid #23324f;border-radius:10px;padding:9px 14px;margin-bottom:5px;font-size:13px;}
 .lrow.st{border-left-color:var(--grn);} .lrow.be{border-left-color:#39415a;opacity:.92;}
+.lrow.watch{border-left-color:var(--amb);opacity:1;background:linear-gradient(180deg,#16203a,var(--card2));}
+.lrow .flag{color:var(--amb);font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;margin-left:7px;}
 .lrow .slot{color:var(--mut);font-size:11px;font-weight:800;text-transform:uppercase;}
 .lrow .nm{color:#fff;font-weight:700;}
 .lrow .nm .tm{color:var(--mut);font-weight:600;font-size:11px;margin-left:6px;}
@@ -181,6 +188,39 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
   color:#8ea0c4;background:#0e1830;border:1px solid #23345a;border-radius:6px;padding:2px 8px;margin-right:8px;}
 .trade .trend{font-size:11px;font-weight:800;margin-left:7px;}
 .trade .trend.up{color:var(--grn);} .trade .trend.dn{color:var(--red);}
+/* ── mobile ─────────────────────────────────────────────────────────────────
+   Narrow screens only. Every rule sits inside the media query, so the desktop
+   layout above is untouched. The fixed-width grids are what break first: they
+   tighten here rather than dropping columns, so no data disappears on a phone. */
+@media (max-width: 680px){
+  .block-container{padding-left:.55rem;padding-right:.55rem;padding-top:.4rem;}
+  .mast h1{font-size:20px;letter-spacing:-.4px;gap:7px;}
+  .mast h1 .kicker{font-size:9.5px;letter-spacing:1.2px;}
+  .mast .sub{font-size:12px;}
+  .statusline{gap:4px 14px;font-size:9.5px;letter-spacing:.5px;}
+  .rail{gap:7px 16px;padding:9px 2px;}
+  .rail .k{font-size:9.5px;letter-spacing:.7px;} .rail .v{font-size:13px;}
+  .rail .sp{display:none;} .rail .upd{font-size:9.5px;}
+  .kpi{padding:11px 13px;border-radius:13px;}
+  .kpi .n{font-size:20px;} .kpi .l{font-size:9.5px;letter-spacing:.6px;}
+  div[data-baseweb="tab-list"]{gap:13px!important;overflow-x:auto;flex-wrap:nowrap;}
+  button[data-baseweb="tab"]{font-size:11.5px!important;letter-spacing:.3px;white-space:nowrap;}
+  .daybar span{font-size:11.5px;letter-spacing:.9px;}
+  /* rows: tighten, never drop a column */
+  .thead,.prow{grid-template-columns:46px 1fr 30px 44px 42px;gap:6px;padding:8px 10px;font-size:12px;}
+  .lhead,.lrow{grid-template-columns:42px 1fr 30px 52px 42px 38px;gap:5px;padding:8px 10px;font-size:12px;}
+  .thead2,.trow{grid-template-columns:24px 1fr 54px 52px 52px 44px;gap:5px;padding:8px 10px;font-size:12px;}
+  .srow{grid-template-columns:24px 1fr 54px 62px;padding:8px 10px;font-size:12px;}
+  .lrow .rank .sd{font-size:8.5px;}
+  /* two-column blocks stack */
+  .trade .legs{grid-template-columns:1fr;}
+  .swap{grid-template-columns:1fr;gap:6px;}
+  .swap .ar{transform:rotate(90deg);text-align:left;}
+  .trade,.actionwrap{padding:12px 14px;}
+  .note{font-size:11.5px;padding:8px 11px;}
+  .ai .txt{font-size:12.5px;} .ai .why{font-size:10.5px;}
+  .verdict{font-size:12.5px;padding:11px 14px;}
+}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -456,62 +496,94 @@ def render_leagues_overview():
     st.markdown(f'<div class="note">{badges} &nbsp; {" · ".join(bits)}</div>',
                 unsafe_allow_html=True)
 
-    # ── season to date, with projected finish ────────────────────────────────
     v = valuer_for(ctx)
-    pranks, rec_weight = A.power_rankings(ctx, v, players)
-    proj_rank = {r["rid"]: r["proj_rank"] for r in pranks}
+    sub = st.tabs(["📋 My Lineup", "📊 Team Rankings"])
 
-    hdr(f"Team rankings · season to date")
-    st.markdown('<div class="thead2"><div>#</div><div>TEAM</div><div>RECORD</div>'
-                '<div>PF</div><div>PA</div><div>PROJ</div></div>', unsafe_allow_html=True)
-    for tm in ctx["standings"]:
-        recs = f'{tm["wins"]}-{tm["losses"]}' + (f'-{tm["ties"]}' if tm["ties"] else "")
-        diff = tm["fpts"] - tm["fpts_against"]
-        pr = proj_rank.get(tm["roster_id"], "—")
-        st.markdown(
-            f'<div class="trow{" me" if tm["is_mine"] else ""}">'
-            f'<div class="rk">{tm["rank"]}</div><div class="tn">{esc(tm["name"])}</div>'
-            f'<div class="c">{recs}</div>'
-            f'<div class="n">{tm["fpts"]:,.1f}</div>'
-            f'<div class="n">{tm["fpts_against"]:,.1f}</div>'
-            f'<div class="n {"g" if diff >= 0 else "r"}">{pr}</div></div>',
-            unsafe_allow_html=True)
-    st.markdown(f'<div class="note">PROJ is projected finish — roster value blended '
-                f'with record, record currently weighted <b>{rec_weight*100:.0f}%</b> '
-                f'and rising as games are played.</div>', unsafe_allow_html=True)
+    # ── your lineup, with this week's consensus alongside ────────────────────
+    with sub[0]:
+        me_ = ctx["my_roster"]
+        ss = A.start_sit(ctx, v, players) if me_ else None
+        if not ss:
+            st.markdown('<div class="empty">You have no roster in this league.</div>',
+                        unsafe_allow_html=True)
+        else:
+            multi_slots = {sl for sl in ctx["roster_positions"]
+                           if len(FLEX_ELIG.get(sl, set())) > 1}
 
-    # ── my lineup, with this week's expert consensus alongside ───────────────
-    if not me:
-        st.markdown('<div class="empty">You have no roster in this league.</div>',
+            # A bench player is "worth a look" when he'd out-rank the weakest
+            # starter he is actually eligible to replace — that's the only
+            # comparison that means anything.
+            starter_by_slot = [(r.get("slot"), r) for r in ss["lineup"]]
+            watch = set()
+            for b in ss["bench"]:
+                for sl, st_r in starter_by_slot:
+                    if b["pos"] not in FLEX_ELIG.get(sl, set()):
+                        continue
+                    if b["score"] >= st_r["score"] * 0.92:
+                        watch.add(b["id"])
+                        break
+
+            hdr(f'Starters · Week {data["week"]} · projected {ss["proj_total"]:.1f}')
+            st.markdown('<div class="lhead"><div>SLOT</div><div>PLAYER</div><div>POS</div>'
+                        '<div>EXPERTS</div><div>PROJ</div><div>FLEX</div></div>',
+                        unsafe_allow_html=True)
+
+            def lineup_row(r, klass, slot=None):
+                rank = "—"
+                if r.get("pos_rank"):
+                    sd = (f'<span class="sd">sd {r["std"]:.1f}</span>'
+                          if r.get("std") is not None else "")
+                    rank = f'{esc(r["pos_rank"])}{sd}'
+                flex = f'{r["overall"]:.0f}' if r.get("overall") else "—"
+                pts = f'{r["pts"]:.1f}' if r["pts"] else "—"
+                flag = ('<span class="flag">start?</span>'
+                        if r["id"] in watch else "")
+                return (f'<div class="lrow {klass}">'
+                        f'<div class="slot">{esc(slot or r.get("slot") or "")}</div>'
+                        f'<div class="nm">{esc(r["name"])}<span class="tm">{esc(r["team"])}</span>'
+                        f'{inj_tag(r)}{flag}</div>'
+                        f'<div class="pos">{esc(r["pos"])}</div>'
+                        f'<div class="rank">{rank}</div>'
+                        f'<div class="pts">{pts}</div>'
+                        f'<div class="gr">{flex}</div></div>')
+
+            st.markdown("".join(lineup_row(r, "st") for r in ss["lineup"]),
+                        unsafe_allow_html=True)
+            if ss["bench"]:
+                hdr("Bench")
+                st.markdown("".join(
+                    lineup_row(r, "watch" if r["id"] in watch else "be", "BN")
+                    for r in ss["bench"]), unsafe_allow_html=True)
+                if watch:
+                    st.markdown('<div class="note">Highlighted bench players score '
+                                'within reach of a starter they could legally replace. '
+                                '<b>FLEX</b> is the FantasyPros cross-position rank, so '
+                                'those numbers compare directly across positions.</div>',
+                                unsafe_allow_html=True)
+
+    # ── season to date, with projected finish ────────────────────────────────
+    with sub[1]:
+        pranks, rec_weight = A.power_rankings(ctx, v, players)
+        proj_rank = {r["rid"]: r["proj_rank"] for r in pranks}
+        hdr("Standings · season to date")
+        st.markdown('<div class="thead2"><div>#</div><div>TEAM</div><div>RECORD</div>'
+                    '<div>PF</div><div>PA</div><div>PROJ</div></div>',
                     unsafe_allow_html=True)
-        return
-    ss = A.start_sit(ctx, v, players)
-    if not ss:
-        return
-
-    hdr(f'Your lineup · Week {data["week"]} · projected {ss["proj_total"]:.1f}')
-    st.markdown('<div class="lhead"><div>SLOT</div><div>PLAYER</div><div>POS</div>'
-                '<div>EXPERTS</div><div>PROJ</div><div>GRADE</div></div>',
+        for tm in ctx["standings"]:
+            recs = f'{tm["wins"]}-{tm["losses"]}' + (f'-{tm["ties"]}' if tm["ties"] else "")
+            diff = tm["fpts"] - tm["fpts_against"]
+            pr = proj_rank.get(tm["roster_id"], "—")
+            st.markdown(
+                f'<div class="trow{" me" if tm["is_mine"] else ""}">'
+                f'<div class="rk">{tm["rank"]}</div><div class="tn">{esc(tm["name"])}</div>'
+                f'<div class="c">{recs}</div>'
+                f'<div class="n">{tm["fpts"]:,.1f}</div>'
+                f'<div class="n">{tm["fpts_against"]:,.1f}</div>'
+                f'<div class="n {"g" if diff >= 0 else "r"}">{pr}</div></div>',
                 unsafe_allow_html=True)
-
-    def lineup_row(r, klass, slot=None):
-        rank = "—"
-        if r.get("pos_rank"):
-            sd = f'<span class="sd">sd {r["std"]:.1f}</span>' if r.get("std") is not None else ""
-            rank = f'{esc(r["pos_rank"])}{sd}'
-        pts = f'{r["pts"]:.1f}' if r["pts"] else "—"
-        return (f'<div class="lrow {klass}"><div class="slot">{esc(slot or r.get("slot") or "")}</div>'
-                f'<div class="nm">{esc(r["name"])}<span class="tm">{esc(r["team"])}</span>'
-                f'{inj_tag(r)}</div>'
-                f'<div class="pos">{esc(r["pos"])}</div>'
-                f'<div class="rank">{rank}</div>'
-                f'<div class="pts">{pts}</div>'
-                f'<div class="gr">{esc(r.get("grade") or "—")}</div></div>')
-
-    st.markdown("".join(lineup_row(r, "st") for r in ss["lineup"]), unsafe_allow_html=True)
-    if ss["bench"]:
-        hdr("Bench")
-        st.markdown("".join(lineup_row(r, "be", "BN") for r in ss["bench"]),
+        st.markdown(f'<div class="note">PROJ is projected finish — roster value '
+                    f'blended with record, record currently weighted '
+                    f'<b>{rec_weight*100:.0f}%</b> and rising as games are played.</div>',
                     unsafe_allow_html=True)
 
 
@@ -617,27 +689,37 @@ def render_action_center():
         st.markdown(f'<div class="lane"><div class="lh {cls}">{title}</div>{body}</div>',
                     unsafe_allow_html=True)
 
-    def rank_tag(r):
-        """This week's expert positional rank, e.g. (RB11)."""
-        return f' <span class="pr">({esc(r["pos_rank"])})</span>' if r.get("pos_rank") else ""
+    def rank_label(slot, r):
+        """For a flex slot the candidates are different positions, so 'WR47 vs
+        TE24' compares nothing — show the cross-position rank instead. For a
+        dedicated slot everyone is the same position, so the positional rank is
+        the readable one."""
+        multi = len(FLEX_ELIG.get(slot, set())) > 1
+        if multi and r.get("overall"):
+            return f'ovr {r["overall"]:.0f}'
+        return r.get("pos_rank") or ""
 
-    def deltas(sw):
-        """What the swap buys and what it costs, side by side."""
+    def rank_tag(slot, r, extra=""):
+        lab = rank_label(slot, r)
+        inner = " · ".join(x for x in (lab, extra) if x)
+        return f' <span class="pr">({esc(inner)})</span>' if inner else ""
+
+    def swap_item(sw):
+        slot = sw["slot"]
+        # deltas belong to the PRIMARY recommendation, not the whole row — with
+        # two alternatives listed it was unclear what "+20 spots" referred to
         bits = []
         if sw.get("rank_delta"):
             bits.append(f'{sw["rank_delta"]:+d} spots')
         if abs(sw["gain"]) >= 0.05:
             bits.append(f'{sw["gain"]:+.1f} proj')
-        return f' <span class="qt">{esc(" · ".join(bits))}</span>' if bits else ""
-
-    def swap_item(sw):
-        alt = "".join(f' <span class="alt">or {esc(a["name"])}</span>{rank_tag(a)}'
+        alt = "".join(f' <span class="alt">or {esc(a["name"])}</span>{rank_tag(slot, a)}'
                       for a in sw["alts"])
-        gain = deltas(sw)
-        return (f'<span class="ai"><span class="txt"><span class="sl">{esc(sw["slot"])}</span>'
-                f'Start <b class="g">{esc(sw["in"]["name"])}</b>{rank_tag(sw["in"])}{alt} '
+        return (f'<span class="ai"><span class="txt"><span class="sl">{esc(slot)}</span>'
+                f'Start <b class="g">{esc(sw["in"]["name"])}</b>'
+                f'{rank_tag(slot, sw["in"], " · ".join(bits))}{alt} '
                 f'over <span class="r">{esc(sw["out"]["name"])}</span>'
-                f'{rank_tag(sw["out"])}{gain}</span></span>')
+                f'{rank_tag(slot, sw["out"])}</span></span>')
 
     def waiver_item(w):
         return (f'<span class="ai"><span class="txt">Add <b>{esc(w["name"])}</b> '
@@ -690,8 +772,12 @@ def render_startsit(ctx):
         hdr("Recommended changes")
         for sw in ss["swaps"]:
             s_in, s_out = sw["in"], sw["out"]
+            slot = sw["slot"]
+            multi = len(FLEX_ELIG.get(slot, set())) > 1
             def pr(r):
-                return f' <span class="pr">({esc(r["pos_rank"])})</span>' if r.get("pos_rank") else ""
+                lab = (f'ovr {r["overall"]:.0f}' if multi and r.get("overall")
+                       else (r.get("pos_rank") or ""))
+                return f' <span class="pr">({esc(lab)})</span>' if lab else ""
             alt = "".join(
                 f'<div class="alt">or {esc(a["name"])}{pr(a)} '
                 f'<span class="m">{esc(a["pos"])}·{a["pts"]:.1f}</span></div>'
@@ -701,7 +787,9 @@ def render_startsit(ctx):
                 gbits.append(f'{sw["rank_delta"]:+d} spots')
             if abs(sw["gain"]) >= 0.05:
                 gbits.append(f'{sw["gain"]:+.1f} proj')
-            gain = f' · {" · ".join(gbits)}' if gbits else ""
+            # states plainly which two players the numbers compare
+            gain = (f' · {esc(sw["in"]["name"])} vs {esc(sw["out"]["name"])}: '
+                    f'{" · ".join(gbits)}') if gbits else ""
             st.markdown(
                 f'<div class="swap"><div class="side"><div class="k in">START · {esc(sw["slot"])}{gain}</div>'
                 f'<div class="n">{esc(s_in["name"])}{pr(s_in)} <span class="m">{esc(s_in["pos"])}·{esc(s_in["team"])} '
@@ -1024,11 +1112,11 @@ with top[0]:
     render_action_center()
 with top[1]:
     # both are trade tools: browse suggestions, then price your own
-    sub = st.tabs(["Ideas", "Calculator"])
+    sub = st.tabs(["🧮 Calculator", "💡 Ideas"])
     with sub[0]:
-        render_trade_ideas_global()
-    with sub[1]:
         render_trade_calc()
+    with sub[1]:
+        render_trade_ideas_global()
 with top[2]:
     render_rankings()
 with top[3]:

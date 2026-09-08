@@ -182,6 +182,19 @@ def waiver_targets(ctx, valuer, players, trend_add, limit=12, shortlist=45):
         pos = pinfo(pid, players)["pos"]
         bench_bar[pos] = max(bench_bar.get(pos, 0.0), valuer.points(pid))
 
+    # The weakest body on the bench is what an add would actually replace. A
+    # strongly-ranked free agent is worth taking even when he doesn't crack the
+    # lineup, provided someone worse is occupying a roster spot. On an optimized
+    # roster this term is ~0 and fewer targets surface, which is correct.
+    droppable = None
+    for pid in my_pids:
+        if pid in started or pinfo(pid, players)["pos"] not in SKILL:
+            continue
+        if droppable is None or valuer.start_score(pid) < valuer.start_score(droppable):
+            droppable = pid
+    drop_bar = valuer.start_score(droppable) if droppable else 0.0
+    drop_name = pinfo(droppable, players)["name"] if droppable else None
+
     # ── stage 1: cheap prefilter over every free agent ────────────────────────
     cands = []
     for pid, p in players.items():
@@ -220,8 +233,13 @@ def waiver_targets(ctx, valuer, players, trend_add, limit=12, shortlist=45):
         pr = valuer.fp_pos_rank(c["id"])
         fp_bonus = max(0.0, 60 - pr) * 0.25 if pr else 0.0
         c["fp_bonus"] = round(fp_bonus, 1)
+        # straight upgrade on the worst body you're rostering
+        drop_delta = round(valuer.start_score(c["id"]) - drop_bar, 1) if droppable else 0.0
+        c["drop_delta"] = drop_delta
+        c["drop_name"] = drop_name
         c["score"] = round(gain * 8 + max(0.0, bench_delta) * 3 + c["pts"] * 1.0
-                           + nd * 20 + c["val"] * 0.30 + buzz_term + fp_bonus, 1)
+                           + nd * 20 + c["val"] * 0.30 + buzz_term + fp_bonus
+                           + max(0.0, drop_delta) * 2.0, 1)
 
         why = []
         if gain > 0:
@@ -236,6 +254,8 @@ def waiver_targets(ctx, valuer, players, trend_add, limit=12, shortlist=45):
             why.append(f"{nd*100:.0f}% below league avg at {c['pos']}")
         if c.get("pos_rank"):
             why.append(f"experts have him {c['pos_rank']} this week")
+        if drop_delta > 1.0 and drop_name:
+            why.append(f"clear upgrade on {drop_name}, your weakest bench spot")
         if c["buzz"]:
             why.append(f"+{c['buzz']:,} adds this week")
         c["why"] = " · ".join(why)
@@ -372,6 +392,13 @@ def _replacement(ctx, valuer, players, rid):
     return repl
 
 
+def _lineup_points(pids, ctx, valuer, players):
+    """Projected points of the best startable lineup — the weekly-score view of a
+    trade, alongside the asset-value view in _lineup_value()."""
+    lu, _ = optimal_lineup(pids, ctx["roster_positions"], players, valuer.start_score)
+    return sum(valuer.points(pid) for _, pid in lu if pid)
+
+
 def _lineup_value(pids, ctx, valuer, players):
     """Total asset value of the best startable lineup these players can field.
 
@@ -451,6 +478,7 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
 
     my_pids = [str(p) for p in mine["players"]]
     my_base_lineup = _lineup_value(my_pids, ctx, valuer, players)
+    my_base_points = _lineup_points(my_pids, ctx, valuer, players)
 
     surplus = sorted([p for p in core if my_str[p] > avg[p] * 1.08],
                      key=lambda p: my_str[p] - avg[p], reverse=True)
@@ -570,6 +598,9 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
                     after = [x for x in my_pids if x not in out_ids] + [r["id"] for r in gets]
                     lineup_delta = round(
                         _lineup_value(after, ctx, valuer, players) - my_base_lineup, 1)
+                    # weekly scoring outlook, separate from long-term asset value
+                    pts_delta = round(
+                        _lineup_points(after, ctx, valuer, players) - my_base_points, 1)
                     # ...and a usability test from THEIR side. A consolidating
                     # partner's starting lineup gets WORSE by design (they trade
                     # quality for depth), so requiring it to improve would reject
@@ -613,6 +644,7 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
                         "get_raw": sum(r["raw"] for r in gets),
                         "my_net": round(my_net, 1), "their_net": round(their_net, 1),
                         "lineup_delta": lineup_delta, "their_lineup_delta": their_delta,
+                        "pts_delta": pts_delta,
                         "my_pos_out": my_sur, "my_pos_in": my_need,
                         "fairness": round(100 - abs(g_cmp - t_cmp) / max(g_cmp, t_cmp) * 100, 0),
                         "package_adj": round((ag if g_raw and t_raw else 0)
@@ -627,7 +659,10 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
     # trade to a human, so keep only the best offer for each asset acquired, and
     # stop any one partner from filling the whole board.
     seen, headline, per_partner, uniq = set(), set(), {}, []
-    for i in sorted(ideas, key=lambda x: (x["lineup_delta"], x["my_net"], x["fairness"]),
+    # rank on what the deal actually improves: startable roster value, this
+    # week's points, then surplus over replacement and fairness
+    for i in sorted(ideas, key=lambda x: (x["lineup_delta"] + x["pts_delta"],
+                                          x["my_net"], x["fairness"]),
                     reverse=True):
         key = (tuple(sorted(r["id"] for r in i["gives"])),
                tuple(sorted(r["id"] for r in i["gets"])))

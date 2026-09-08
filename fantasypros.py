@@ -17,6 +17,7 @@ it from a public URL — that republishes their product. ENABLE_FP is the gate:
 leave it on locally, off in a public deployment, where everything degrades
 gracefully to Sleeper projections.
 """
+import os
 import re
 import json
 import time
@@ -34,6 +35,38 @@ _ECR_RE = re.compile(r"var\s+ecrData\s*=\s*(\{.*?\});\s*\n", re.S)
 
 POSITIONS = ("QB", "RB", "WR", "TE")
 _SUFFIX = re.compile(r"\b(jr|sr|ii|iii|iv|v)\b")
+
+
+# ── disk cache ────────────────────────────────────────────────────────────────
+# The crawl delay, not the network, is what makes a cold load slow: five requests
+# five seconds apart. Streamlit's cache dies with the process, so every restart
+# paid that again. Persisting to the same cache dir as the player file makes a
+# restart instant and keeps us well under FantasyPros' request budget.
+DISK_TTL = 3 * 3600
+
+
+def _disk_path(key):
+    return os.path.join(S.DATA, f"fp_{key}.json")
+
+
+def _disk_get(key, max_age=DISK_TTL):
+    fp = _disk_path(key)
+    try:
+        if os.path.exists(fp) and (time.time() - os.path.getmtime(fp)) < max_age:
+            with open(fp) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return None
+
+
+def _disk_put(key, obj):
+    try:
+        with open(_disk_path(key), "w") as f:
+            json.dump(obj, f)
+    except Exception:
+        pass
+    return obj
 
 
 def scoring_slug(rec):
@@ -82,7 +115,21 @@ def _fetch(pos, slug, week):
     return _fetch_url(_url(pos, slug), week)
 
 
+_last_request = [0.0]
+
+
+def _throttle():
+    """Space real requests by the crawl delay. Applied at the request layer, not
+    around the callers, so a cache hit costs nothing — that distinction is the
+    whole difference between a 15 second warm start and an instant one."""
+    gap = time.time() - _last_request[0]
+    if gap < CRAWL_DELAY:
+        time.sleep(CRAWL_DELAY - gap)
+    _last_request[0] = time.time()
+
+
 def _fetch_url(url, week):
+    _throttle()
     params = {"week": week} if week else None
     try:
         r = requests.get(url, params=params, headers={"User-Agent": UA}, timeout=25)
@@ -106,28 +153,33 @@ def rankings(slug, week):
     """
     if not ENABLE_FP:
         return {}
+    key = f"pos_{slug or 'std'}_{week}"
+    cached = _disk_get(key)
+    if cached is not None:
+        return cached
     out = {}
-    for i, pos in enumerate(POSITIONS):
-        if i:
-            time.sleep(CRAWL_DELAY)            # honour robots.txt
+    for pos in POSITIONS:
         d = _fetch(pos, slug, week)
         if not d:
             continue
         rows = d.get("players") or []
         if rows:
             out[pos] = rows
-    return out
+    return _disk_put(key, out) if out else out
 
 
 @S.cache(ttl=3 * 3600)
 def overall(slug, week, superflex):
     """{normalized name+pos key: (overall_rank, std)} off the cross-position board."""
-    d = _fetch_url(_url_overall(slug, superflex), week)
-    out = {}
-    for r in (d or {}).get("players", []):
-        key = (_namekey(r.get("player_name")), r.get("player_position_id"))
-        out[key] = (_num(r.get("rank_ecr")), _num(r.get("rank_std")))
-    return out
+    key = f"ovr_{slug or 'std'}_{week}_{'sf' if superflex else 'flx'}"
+    cached = _disk_get(key)
+    if cached is None:
+        d = _fetch_url(_url_overall(slug, superflex), week)
+        rows = [(r.get("player_name"), r.get("player_position_id"),
+                 _num(r.get("rank_ecr")), _num(r.get("rank_std")))
+                for r in (d or {}).get("players", [])]
+        cached = _disk_put(key, rows) if rows else rows
+    return {(_namekey(n), pos): (e, sd) for n, pos, e, sd in cached}
 
 
 @S.cache(ttl=3 * 3600)
@@ -148,7 +200,6 @@ def by_sleeper_id(slug, week, superflex=False):
         key = (_namekey(nm), pos)
         idx.setdefault(key, []).append((pid, (p.get("team") or "").upper()))
 
-    time.sleep(CRAWL_DELAY)
     # One board per league: FLX ranks RB/WR/TE against each other, superflex (OP)
     # adds QBs. A QB has no flex rank in a 1QB league and that is correct — you
     # never start him in a flex slot there, so there is nothing to compare against.
