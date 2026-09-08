@@ -238,7 +238,9 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
   border-radius:12px;padding:11px 14px;}
 .strbox h4{margin:0 0 8px;font-size:12px;font-weight:900;color:#fff;letter-spacing:.3px;
   display:flex;justify-content:space-between;align-items:baseline;gap:8px;}
-.strbox h4 .cap{font-size:10px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;}
+.strbox h4 .who{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.strbox h4 .cap{margin-left:auto;padding-left:10px;flex:none;font-size:10px;font-weight:700;
+  color:var(--mut);text-transform:uppercase;letter-spacing:.6px;}
 .strrow{display:grid;grid-template-columns:42px 1fr 40px;gap:8px;align-items:center;margin-bottom:5px;}
 .strrow .p{font-size:11px;font-weight:800;color:#b9c6e3;}
 .strrow .bar{height:7px;border-radius:4px;background:#0e1830;position:relative;overflow:hidden;}
@@ -1204,7 +1206,7 @@ def render_trade_calc():
                 f'<div class="strrow"><div class="p">{pos}</div>'
                 f'<div class="bar"><i class="{cls}" style="left:0;width:{share*100:.0f}%"></i></div>'
                 f'<div class="v {cls}">{_ord(rk)}</div></div>')
-        return (f'<div class="strbox"><h4>{esc(label)}'
+        return (f'<div class="strbox"><h4><span class="who">{esc(label)}</span>'
                 f'<span class="cap">of {n_teams} teams</span></h4>{rows_html}</div>')
 
     mine_rows, their_rows = rows_for(me), rows_for(partner)
