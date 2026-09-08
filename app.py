@@ -223,15 +223,15 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
 .strbox h4{margin:0 0 8px;font-size:12px;font-weight:900;color:#fff;letter-spacing:.3px;
   display:flex;justify-content:space-between;align-items:baseline;gap:8px;}
 .strbox h4 .cap{font-size:10px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;}
-.strrow{display:grid;grid-template-columns:34px 1fr 52px;gap:8px;align-items:center;margin-bottom:5px;}
+.strrow{display:grid;grid-template-columns:42px 1fr 40px;gap:8px;align-items:center;margin-bottom:5px;}
 .strrow .p{font-size:11px;font-weight:800;color:#b9c6e3;}
 .strrow .bar{height:7px;border-radius:4px;background:#0e1830;position:relative;overflow:hidden;}
 .strrow .bar i{position:absolute;left:0;top:0;bottom:0;border-radius:4px;display:block;}
 .strrow .bar i.up{background:linear-gradient(90deg,#12b37a,var(--grn));}
+.strrow .bar i.mid{background:linear-gradient(90deg,#7a6a2e,var(--amb));}
 .strrow .bar i.dn{background:linear-gradient(90deg,#8a3550,var(--red));}
-.strrow .bar .mid{position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:#2b3a5c;}
 .strrow .v{font-size:10.5px;font-weight:800;text-align:right;font-family:'JetBrains Mono',monospace;}
-.strrow .v.up{color:var(--grn);} .strrow .v.dn{color:var(--red);}
+.strrow .v.up{color:var(--grn);} .strrow .v.mid{color:var(--amb);} .strrow .v.dn{color:var(--red);}
 /* trade calculator */
 .verdict{border-radius:14px;padding:13px 18px;margin:10px 0 4px;font-size:14px;font-weight:800;
   border:1px solid var(--line);background:linear-gradient(160deg,var(--card),var(--card2));}
@@ -1103,35 +1103,37 @@ def render_trade_calc():
                  "val": v.value(pid), "pts": v.points(pid)} for pid in team["players"]]
         return sorted(rows, key=lambda r: (r["raw"], r["val"]), reverse=True)
 
-    # ── positional strength for both sides, so needs are visible while you build
+    # ── where each side ranks, position by position ─────────────────────────
     teams_str, avg_str = A.positional_strength(ctx, v, players)
-    pick_rows_for = None
+    n_teams = len(teams_str) or 1
+    pos_rank = {}
+    for pos in ("QB", "RB", "WR", "TE"):
+        ordered = sorted(teams_str.items(),
+                         key=lambda kv: kv[1]["strength"].get(pos, 0), reverse=True)
+        pos_rank[pos] = {rid: i + 1 for i, (rid, _) in enumerate(ordered)}
+    pick_rank = {}          # filled in by the pick block below, dynasty only
+
+    def _ord(n):
+        return f"{n}{'th' if 11 <= n % 100 <= 13 else {1:'st',2:'nd',3:'rd'}.get(n % 10, 'th')}"
 
     def strength_box(team, label):
-        """Each position against the league average, plus pick capital. This is
-        the reference you actually want open while assembling a deal: where they
-        are thin is where they will pay."""
-        st_ = teams_str.get(team["roster_id"], {}).get("strength", {})
+        """Each position as a league rank rather than a percentage. "3rd of 12 at
+        RB" places you immediately; "+56%" needs arithmetic. Where a rival ranks
+        near the bottom is where they will pay up."""
+        rid = team["roster_id"]
         rows_html = ""
-        for pos in ("QB", "RB", "WR", "TE"):
-            a = avg_str.get(pos, 0) or 1
-            ratio = st_.get(pos, 0) / a
-            pct = max(-1.0, min(1.0, ratio - 1.0))          # -100%..+100% vs average
-            up = pct >= 0
-            width = abs(pct) * 50                            # half-width from centre
-            left = 50 if up else 50 - width
+        entries = [(pos, pos_rank[pos].get(rid, n_teams)) for pos in ("QB", "RB", "WR", "TE")]
+        if pick_rank:
+            entries.append(("PICKS", pick_rank.get(rid, n_teams)))
+        for pos, rk in entries:
+            share = (n_teams - rk) / max(1, n_teams - 1)      # 1.0 best .. 0.0 worst
+            cls = "up" if share >= 0.66 else ("mid" if share >= 0.33 else "dn")
             rows_html += (
                 f'<div class="strrow"><div class="p">{pos}</div>'
-                f'<div class="bar"><i class="{"up" if up else "dn"}" '
-                f'style="left:{left:.0f}%;width:{width:.0f}%"></i>'
-                f'<span class="mid"></span></div>'
-                f'<div class="v {"up" if up else "dn"}">{pct*100:+.0f}%</div></div>')
-        cap = ""
-        if ctx["format"] == "dynasty" and v.pick_scale():
-            tot = sum(r["raw"] for r in pick_rows_for(team)) if pick_rows_for else 0
-            if tot:
-                cap = f'<span class="cap">{tot:,} pick capital</span>'
-        return (f'<div class="strbox"><h4>{esc(label)}{cap}</h4>{rows_html}</div>')
+                f'<div class="bar"><i class="{cls}" style="left:0;width:{share*100:.0f}%"></i></div>'
+                f'<div class="v {cls}">{_ord(rk)}</div></div>')
+        return (f'<div class="strbox"><h4>{esc(label)}'
+                f'<span class="cap">of {n_teams} teams</span></h4>{rows_html}</div>')
 
     mine_rows, their_rows = rows_for(me), rows_for(partner)
 
@@ -1167,7 +1169,10 @@ def render_trade_calc():
 
         mine_rows += pick_rows(me)
         their_rows += pick_rows(partner)
-        pick_rows_for = pick_rows
+        totals = {t["roster_id"]: sum(r["raw"] for r in pick_rows(t)) for t in ctx["teams"]}
+        for i, (rid_, _) in enumerate(sorted(totals.items(), key=lambda kv: kv[1],
+                                             reverse=True)):
+            pick_rank[rid_] = i + 1
 
     look = {r["id"]: r for r in mine_rows + their_rows}
 
@@ -1181,9 +1186,9 @@ def render_trade_calc():
     st.markdown(f'<div class="strgrid">{strength_box(me, "You")}'
                 f'{strength_box(partner, partner["name"])}</div>',
                 unsafe_allow_html=True)
-    st.markdown('<div class="note">Bars show each position against the league '
-                'average for this format. A rival deep in the red there is where '
-                'they will pay up.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="note">Each position ranked against the rest of the '
+                'league. Where a rival sits near the bottom is where they will '
+                'pay up.</div>', unsafe_allow_html=True)
 
     s1, s2 = st.columns(2)
     send = s1.multiselect("You send", [r["id"] for r in mine_rows],
