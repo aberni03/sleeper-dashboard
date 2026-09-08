@@ -1207,6 +1207,9 @@ def render_trade_calc():
         for pos, rk in entries:
             share = (n_teams - rk) / max(1, n_teams - 1)      # 1.0 best .. 0.0 worst
             cls = "up" if share >= 0.66 else ("mid" if share >= 0.33 else "dn")
+            # last place would otherwise draw an empty track, which reads as "no
+            # players here" rather than "worst in the league"
+            share = max(share, 0.07)
             rows_html += (
                 f'<div class="strrow"><div class="p">{pos}</div>'
                 f'<div class="bar"><i class="{cls}" style="left:0;width:{share*100:.0f}%"></i></div>'
