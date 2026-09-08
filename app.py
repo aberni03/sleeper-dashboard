@@ -42,7 +42,8 @@ div[data-testid="stDecoration"]{display:none!important;}
 .statusline .on{color:var(--grn);}
 .note{background:linear-gradient(160deg,#10233f,#0b1526);border:1px solid #26406a;border-radius:11px;
   padding:9px 14px;margin:2px 0 14px;color:#9fb0d0;font-size:12px;} .note b{color:#c7d2ea;}
-.kpi{background:linear-gradient(160deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:16px;padding:14px 18px;}
+.kpi{background:linear-gradient(160deg,var(--card),var(--card2));border:1px solid var(--line);
+  border-radius:16px;padding:14px 18px;margin-bottom:12px;}
 .kpi .n{font-size:25px;font-weight:900;color:var(--txt);line-height:1;} .kpi .n.g{color:var(--grn);} .kpi .n.c{color:var(--cyan);}
 .kpi .l{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:1px;margin-top:6px;font-weight:600;}
 .daybar{display:flex;align-items:center;gap:10px;margin:18px 0 10px;}
@@ -163,6 +164,7 @@ div[data-baseweb="tab-border"]{display:none!important;}
 /* selected KPI tile */
 .kpi.on{border-color:var(--grn);box-shadow:0 0 0 1px rgba(25,229,155,.28) inset,0 0 24px rgba(25,229,155,.07);}
 /* st.pills -> screenshot filter chips */
+div[data-testid="stPills"],div[data-testid="stButtonGroup"]{margin:4px 0 10px;}
 div[data-testid="stPills"] button,div[data-testid="stButtonGroup"] button{
   border-radius:22px!important;border:1px solid var(--line)!important;background:transparent!important;
   color:#9fb0d0!important;font-weight:700!important;font-size:12.5px!important;padding:6px 17px!important;}
