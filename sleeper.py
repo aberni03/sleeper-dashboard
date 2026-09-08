@@ -32,12 +32,32 @@ PROJ = "https://api.sleeper.app"          # projections live off the /v1 path
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "sleeper-dashboard/0.1"})
 
-# ── optional streamlit cache (falls back to a plain dict cache off-app) ────────
+# ── optional streamlit caches (fall back to plain dict caches off-app) ────────
+# Two kinds matter here. cache_data is per-value and hands every caller its own
+# copy; cache_resource hands every session the SAME object. The 16MB player file
+# is read-only and identical for everyone, so it belongs in the second: one copy
+# in memory serving every visitor, rather than one parse per session per rerun.
 try:
     import streamlit as st
     cache = st.cache_data
 except Exception:                                         # running outside streamlit (tests/CLI)
     def cache(ttl=None):
+        def deco(fn):
+            store = {}
+            def wrap(*a, **k):
+                key = (a, tuple(sorted(k.items())))
+                if key not in store:
+                    store[key] = fn(*a, **k)
+                return store[key]
+            return wrap
+        return deco
+
+
+try:
+    import streamlit as _st
+    resource = _st.cache_resource
+except Exception:
+    def resource(ttl=None):
         def deco(fn):
             store = {}
             def wrap(*a, **k):
@@ -59,7 +79,8 @@ def _get(url, default=None):
         return default
 
 
-# ── players master file (≈5MB, ~11k players) — cached to disk for a day ───────
+# ── players master file (~16MB, ~12k players) — disk cached for a day ────────
+@resource(ttl=6 * 3600)
 def load_players(max_age_hours=24):
     fp = os.path.join(DATA, "players_nfl.json")
     if os.path.exists(fp) and (time.time() - os.path.getmtime(fp)) < max_age_hours * 3600:
