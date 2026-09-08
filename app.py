@@ -113,15 +113,9 @@ div[data-baseweb="tab-border"]{display:none!important;}
   background:#0e1830;border:1px solid #23345a;border-radius:6px;padding:1px 6px;margin-bottom:2px;text-transform:uppercase;letter-spacing:.4px;}
 .ai .txt{color:#e7edf7;font-size:13px;} .ai .txt b{color:#fff;} .ai .txt .g{color:var(--grn);font-weight:700;} .ai .txt .r{color:var(--red);}
 .lane .none{color:#5b688a;font-size:12.5px;font-style:italic;}
-/* header stat rail (CFB-style metric strip) */
-.rail{display:flex;flex-wrap:wrap;align-items:center;gap:9px 28px;border-top:1px solid var(--line);
   border-bottom:1px solid var(--line);padding:9px 4px;margin:8px 0 12px;}
-.rail .it{display:flex;align-items:baseline;gap:7px;}
-.rail .k{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:1.1px;color:var(--mut);}
-.rail .v{font-size:14.5px;font-weight:900;color:#eef3fc;font-family:'JetBrains Mono',monospace;}
-.rail .v.g{color:var(--grn);} .rail .v.c{color:var(--cyan);} .rail .v.a{color:var(--amb);} .rail .v.v{color:var(--vio);}
-.rail .sp{flex:1;min-width:8px;}
-.rail .upd{font-size:10.5px;color:#5b688a;letter-spacing:.7px;text-transform:uppercase;font-weight:700;}
+.upd{font-size:9.5px;color:#4d5975;letter-spacing:.6px;text-transform:uppercase;
+  font-weight:700;text-align:center;margin-top:5px;}
 /* matchup ticker — the track holds two copies of the same items, so translating
    it exactly half its width loops seamlessly with no visible jump */
 .ticker{position:relative;overflow:hidden;border-top:1px solid var(--line);
@@ -224,9 +218,6 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
   .mast h1 .kicker{font-size:9.5px;letter-spacing:1.2px;}
   .mast .sub{font-size:12px;}
   .statusline{gap:4px 14px;font-size:9.5px;letter-spacing:.5px;}
-  .rail{gap:7px 16px;padding:9px 2px;}
-  .rail .k{font-size:9.5px;letter-spacing:.7px;} .rail .v{font-size:13px;}
-  .rail .sp{display:none;} .rail .upd{font-size:9.5px;}
   .kpi{padding:11px 13px;border-radius:13px;}
   .kpi .n{font-size:20px;} .kpi .l{font-size:9.5px;letter-spacing:.6px;}
   div[data-baseweb="tab-list"]{gap:13px!important;overflow-x:auto;flex-wrap:nowrap;}
@@ -285,6 +276,13 @@ with h2:
 with h3:
     if st.button("↻ Refresh", use_container_width=True):
         st.cache_data.clear(); st.rerun()
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        _upd = datetime.now(ZoneInfo("America/New_York")).strftime("%-I:%M %p ET")
+    except Exception:
+        _upd = ""
+    st.markdown(f'<div class="upd">Updated {esc(_upd)}</div>', unsafe_allow_html=True)
 
 if username and username != qp.get("u"):
     st.query_params["u"] = username
@@ -726,41 +724,6 @@ def render_ticker():
     track = "".join(items)
     st.markdown(f'<div class="ticker"><div class="track">{track}{track}</div></div>',
                 unsafe_allow_html=True)
-
-
-# ── header stat rail ─# ── header stat rail ──────────────────────────────────────────────────────────
-def render_stat_rail():
-    w = l = t = 0
-    for ctx in data["contexts"]:
-        me = ctx["my_roster"]
-        if me:
-            w += me["wins"]; l += me["losses"]; t += me["ties"]
-    n_moves = n_trades = 0
-    for ctx in data["contexts"]:
-        d = digest_for(ctx)
-        ss = d["start_sit"]
-        n_moves += len(ss["start"]) if ss else 0
-        n_trades += len(trades_for(ctx))
-    rec = f"{w}-{l}" + (f"-{t}" if t else "")
-    played = (w + l + t) > 0
-    pct = (100.0 * w / (w + l)) if (w + l) else 0.0
-    try:
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        upd = datetime.now(ZoneInfo("America/New_York")).strftime("%-I:%M %p ET")
-    except Exception:
-        upd = ""
-    items = [
-        ("Combined record", rec, "g" if (played and pct >= 50) else ""),
-        ("Win %", f"{pct:.0f}%" if played else "TBD",
-         "g" if (played and pct >= 50) else "a"),
-        ("Lineup moves", str(n_moves), "c"),
-        ("Trade ideas", str(n_trades), "a"),
-    ]
-    inner = "".join(f'<div class="it"><span class="k">{esc(k)}</span>'
-                    f'<span class="v {c}">{esc(v)}</span></div>' for k, v, c in items)
-    st.markdown(f'<div class="rail">{inner}<div class="sp"></div>'
-                f'<div class="upd">Updated {esc(upd)}</div></div>', unsafe_allow_html=True)
 
 
 # ── global action center: every move across every league, in one place ────────
@@ -1223,7 +1186,6 @@ def render_trade_calc():
 
 
 # ── header stat rail ──────────────────────────────────────────────────────────
-render_stat_rail()
 render_ticker()
 
 # ── top-level board ───────────────────────────────────────────────────────────
