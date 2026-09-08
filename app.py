@@ -114,8 +114,10 @@ div[data-baseweb="tab-border"]{display:none!important;}
 .ai .txt{color:#e7edf7;font-size:13px;} .ai .txt b{color:#fff;} .ai .txt .g{color:var(--grn);font-weight:700;} .ai .txt .r{color:var(--red);}
 .lane .none{color:#5b688a;font-size:12.5px;font-style:italic;}
   border-bottom:1px solid var(--line);padding:9px 4px;margin:8px 0 12px;}
-.upd{font-size:9.5px;color:#4d5975;letter-spacing:.6px;text-transform:uppercase;
-  font-weight:700;text-align:center;margin-top:5px;}
+/* a timestamp, not a headline: the bold uppercase letter-spaced treatment was
+   what made this read loud, more than its size */
+.upd{font-size:9px;color:#3b4660;letter-spacing:.1px;font-weight:500;
+  text-align:center;margin-top:5px;}
 /* matchup ticker — the track holds two copies of the same items, so translating
    it exactly half its width loops seamlessly with no visible jump */
 .ticker{position:relative;overflow:hidden;border-top:1px solid var(--line);
@@ -282,7 +284,7 @@ with h3:
         _upd = datetime.now(ZoneInfo("America/New_York")).strftime("%-I:%M %p ET")
     except Exception:
         _upd = ""
-    st.markdown(f'<div class="upd">Updated {esc(_upd)}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="upd">updated {esc(_upd)}</div>', unsafe_allow_html=True)
 
 if username and username != qp.get("u"):
     st.query_params["u"] = username
