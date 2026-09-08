@@ -266,6 +266,72 @@ def waiver_targets(ctx, valuer, players, trend_add, limit=12, shortlist=45):
     return out[:limit]
 
 
+# ── this week's matchups ──────────────────────────────────────────────────────
+WEEK_SD = 27.0          # typical spread of a single team's weekly score
+
+
+def week_matchups(ctx, valuer, players, rows):
+    """Pair up this week's matchups and price both sides, live-aware.
+
+    Before kickoff each side is just its projected starters. Once points are on
+    the board the expected final becomes what's already scored plus the
+    projection of starters yet to score — so refreshing mid-slate reflects both
+    the games in progress and any projection changes for the later window (a
+    player ruled out sees his projection collapse, which flows straight through).
+
+    Known limitation: a starter who has played and genuinely scored zero is
+    indistinguishable from one who hasn't kicked off, so his projection is still
+    counted. That biases a live number slightly high, never low.
+
+    Win probability treats the remaining points as normal around that expectation
+    with a ~27 point spread per team, shrinking as the slate completes: a 10
+    point edge before kickoff is only about 60/40, but the same edge with one
+    player left is close to decided.
+    """
+    by_team = {t["roster_id"]: t for t in ctx["teams"]}
+    groups = {}
+    for r in rows:
+        mid = r.get("matchup_id")
+        if mid is None:
+            continue
+        groups.setdefault(mid, []).append(r)
+
+    out = []
+    for mid in sorted(groups):
+        pair = groups[mid]
+        if len(pair) != 2:
+            continue                       # bye weeks / odd league sizes
+        sides = []
+        for r in pair:
+            starters = [str(x) for x in (r.get("starters") or []) if x and str(x) != "0"]
+            spts = r.get("starters_points") or []
+            live = round(r.get("points") or 0, 1)
+            proj_all = sum(valuer.points(x) for x in starters)
+            remaining, yet = 0.0, 0
+            for i, pid in enumerate(starters):
+                scored = spts[i] if i < len(spts) else 0
+                if not scored:
+                    remaining += valuer.points(pid)
+                    yet += 1
+            tm = by_team.get(r["roster_id"], {})
+            sides.append({"rid": r["roster_id"], "name": tm.get("name", "?"),
+                          "is_mine": bool(tm.get("is_mine")),
+                          "proj": round(proj_all, 1), "live": live,
+                          "yet_to_play": yet,
+                          "expected": round(live + remaining, 1)})
+        a, b = sides
+        started = (a["live"] > 0 or b["live"] > 0)
+        # uncertainty shrinks with the share of the lineup still to play
+        share = max(a["yet_to_play"], b["yet_to_play"]) / max(
+            1, max(len(x.get("starters") or []) for x in pair))
+        spread = WEEK_SD * math.sqrt(2) * max(0.15, share)
+        pa = 0.5 * (1 + math.erf((a["expected"] - b["expected"]) / (spread * math.sqrt(2))))
+        a["win"], b["win"] = round(pa * 100), round((1 - pa) * 100)
+        out.append({"a": a, "b": b, "mine": a["is_mine"] or b["is_mine"],
+                    "live": started})
+    return out
+
+
 # ── projected standings & rookie picks ────────────────────────────────────────
 def power_rankings(ctx, valuer, players):
     """Project where each team finishes — which is what sets rookie draft order.

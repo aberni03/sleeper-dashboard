@@ -122,6 +122,31 @@ div[data-baseweb="tab-border"]{display:none!important;}
 .rail .v.g{color:var(--grn);} .rail .v.c{color:var(--cyan);} .rail .v.a{color:var(--amb);} .rail .v.v{color:var(--vio);}
 .rail .sp{flex:1;min-width:8px;}
 .rail .upd{font-size:10.5px;color:#5b688a;letter-spacing:.7px;text-transform:uppercase;font-weight:700;}
+/* matchup ticker — the track holds two copies of the same items, so translating
+   it exactly half its width loops seamlessly with no visible jump */
+.ticker{position:relative;overflow:hidden;border-top:1px solid var(--line);
+  border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0a1224,#070b16);
+  padding:9px 0;margin:0 0 12px;}
+.ticker:before,.ticker:after{content:'';position:absolute;top:0;bottom:0;width:52px;z-index:2;pointer-events:none;}
+.ticker:before{left:0;background:linear-gradient(90deg,#070b16,transparent);}
+.ticker:after{right:0;background:linear-gradient(270deg,#070b16,transparent);}
+.ticker .track{display:flex;width:max-content;animation:tickscroll 110s linear infinite;}
+.ticker:hover .track{animation-play-state:paused;}
+@keyframes tickscroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.tk{display:inline-flex;align-items:baseline;gap:7px;padding:0 20px;
+  border-right:1px solid #17233b;white-space:nowrap;font-size:12.5px;}
+.tk .lg{color:#4d5975;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.9px;}
+.tk .t{color:#dbe4f7;font-weight:700;} .tk .t.me{color:var(--grn);}
+.tk .p{color:#8ea0c4;font-family:'JetBrains Mono',monospace;font-weight:700;}
+.tk .w{font-weight:800;font-family:'JetBrains Mono',monospace;}
+.tk .w.up{color:var(--grn);} .tk .w.dn{color:#6f7f9e;}
+.tk .vs{color:#4d5975;font-size:10px;font-weight:800;text-transform:uppercase;}
+.tk .exp{color:#5b688a;font-size:10.5px;font-weight:700;font-family:'JetBrains Mono',monospace;}
+.tk .lv{color:var(--red);font-size:9px;font-weight:900;letter-spacing:1px;
+  background:rgba(255,77,115,.14);border-radius:4px;padding:1px 5px;}
+@media (prefers-reduced-motion: reduce){
+  .ticker .track{animation:none;} .ticker{overflow-x:auto;}
+}
 /* selected KPI tile */
 .kpi.on{border-color:var(--grn);box-shadow:0 0 0 1px rgba(25,229,155,.28) inset,0 0 24px rgba(25,229,155,.07);}
 /* st.pills -> screenshot filter chips */
@@ -207,6 +232,10 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
   div[data-baseweb="tab-list"]{gap:13px!important;overflow-x:auto;flex-wrap:nowrap;}
   button[data-baseweb="tab"]{font-size:11.5px!important;letter-spacing:.3px;white-space:nowrap;}
   .daybar span{font-size:11.5px;letter-spacing:.9px;}
+  .tk{font-size:11px;gap:5px;padding:0 13px;}
+  .tk .lg{font-size:8px;} .ticker{padding:7px 0;}
+  .ticker .track{animation-duration:75s;}
+  .ticker:before,.ticker:after{width:26px;}
   /* rows: tighten, never drop a column */
   .thead,.prow{grid-template-columns:46px 1fr 30px 44px 42px;gap:6px;padding:8px 10px;font-size:12px;}
   .lhead,.lrow{grid-template-columns:42px 1fr 30px 52px 42px 38px;gap:5px;padding:8px 10px;font-size:12px;}
@@ -472,13 +501,25 @@ def render_leagues_overview():
 
     kc = st.columns(4)
     rec = f"{w}-{l}" + (f"-{t}" if t else "")
+    # Before any game is final none of this means anything: every team is 0-0, so
+    # "rank" is just the tiebreak order and points are zero. Say TBD rather than
+    # print a number that looks real. These fill in as results land.
+    played = (w + l + t) > 0
     tiles = [(rec, "Combined record", "g" if w >= l else "", True),
-             (f"{pf:,.0f}", "Points for", "c", False),
-             (f"{pf - pa:+,.0f}", "Point differential", "g" if pf >= pa else "", False),
-             (f"{(sum(ranks)/len(ranks)):.1f}" if ranks else "—", "Average finish", "a", False)]
+             (f"{pf:,.0f}" if played else "TBD", "Points for", "c", False),
+             (f"{pf - pa:+,.0f}" if played else "TBD", "Point differential",
+              "g" if (played and pf >= pa) else "", False),
+             (f"{(sum(ranks)/len(ranks)):.1f}" if (played and ranks) else "TBD",
+              "Average finish", "a", False)]
     for col, (n, lab, cls, on) in zip(kc, tiles):
         col.markdown(f'<div class="kpi{" on" if on else ""}"><div class="n {cls}">{n}</div>'
                      f'<div class="l">{esc(lab)}</div></div>', unsafe_allow_html=True)
+
+    if not played:
+        st.markdown(f'<div class="note">Season totals show <b>TBD</b> until week '
+                    f'{data["week"]} results are final — every team is 0-0, so a '
+                    'finish or a point total would be noise. They fill in as games '
+                    'complete.</div>', unsafe_allow_html=True)
 
     pick = st.pills("League", [c["name"] for c in ctxs], default=ctxs[0]["name"],
                     key="lg_pick", label_visibility="collapsed") or ctxs[0]["name"]
@@ -647,7 +688,54 @@ def render_guillotine():
                     'the bids worth spending on.</div>', unsafe_allow_html=True)
 
 
-# ── header stat rail ──────────────────────────────────────────────────────────
+# ── this week's matchup ticker ───────────────────────────────────────────────
+def render_ticker():
+    """Your own matchup in every league, scrolling.
+
+    Before kickoff each side shows its projected total; once points are on the
+    board it shows the live score with the expected final beside it, so a
+    mid-slate refresh reflects games in progress and any projection change for
+    the later window. Hovering pauses the scroll.
+    """
+    items = []
+    for ctx in data["contexts"]:
+        try:
+            rows = S.league_matchups(ctx["league_id"], data["week"])
+            games = A.week_matchups(ctx, valuer_for(ctx), players, rows)
+        except Exception:
+            continue
+        for g in games:
+            if not g["mine"]:
+                continue                       # only the games you're actually in
+            # put the user's team first so the eye lands on it
+            a, b = (g["a"], g["b"]) if g["a"]["is_mine"] else (g["b"], g["a"])
+
+            def side(sd, other, mine=False):
+                me = " me" if mine else ""
+                w = "up" if sd["win"] >= other["win"] else "dn"
+                if g["live"]:
+                    num = (f'<span class="p">{sd["live"]:.1f}</span>'
+                           f'<span class="exp">→{sd["expected"]:.0f}</span>')
+                else:
+                    num = f'<span class="p">{sd["proj"]:.1f}</span>'
+                return (f'<span class="t{me}">{esc(sd["name"])}</span>{num}'
+                        f'<span class="w {w}">{sd["win"]}%</span>')
+
+            flag = '<span class="lv">LIVE</span>' if g["live"] else ""
+            items.append(f'<span class="tk"><span class="lg">{esc(ctx["name"][:20])}</span>'
+                         f'{flag}{side(a, b, True)}<span class="vs">vs</span>{side(b, a)}</span>')
+    if not items:
+        return
+    # a handful of items would leave the track shorter than the viewport, so
+    # repeat until it fills, then double the whole thing for a seamless loop
+    while len(items) < 8:
+        items = items * 2
+    track = "".join(items)
+    st.markdown(f'<div class="ticker"><div class="track">{track}{track}</div></div>',
+                unsafe_allow_html=True)
+
+
+# ── header stat rail ─# ── header stat rail ──────────────────────────────────────────────────────────
 def render_stat_rail():
     w = l = t = 0
     for ctx in data["contexts"]:
@@ -661,6 +749,7 @@ def render_stat_rail():
         n_moves += len(ss["start"]) if ss else 0
         n_trades += len(trades_for(ctx))
     rec = f"{w}-{l}" + (f"-{t}" if t else "")
+    played = (w + l + t) > 0
     pct = (100.0 * w / (w + l)) if (w + l) else 0.0
     try:
         from datetime import datetime
@@ -669,8 +758,9 @@ def render_stat_rail():
     except Exception:
         upd = ""
     items = [
-        ("Combined record", rec, "g" if pct >= 50 else ""),
-        ("Win %", f"{pct:.0f}%", "g" if pct >= 50 else "a"),
+        ("Combined record", rec, "g" if (played and pct >= 50) else ""),
+        ("Win %", f"{pct:.0f}%" if played else "TBD",
+         "g" if (played and pct >= 50) else "a"),
         ("Lineup moves", str(n_moves), "c"),
         ("Trade ideas", str(n_trades), "a"),
     ]
@@ -1141,6 +1231,7 @@ def render_trade_calc():
 
 # ── header stat rail ──────────────────────────────────────────────────────────
 render_stat_rail()
+render_ticker()
 
 # ── top-level board ───────────────────────────────────────────────────────────
 top = st.tabs(["⚡ This Week", "🏆 Leagues", "📊 Rankings", "🤝 Trades",

@@ -114,7 +114,7 @@ def trending(kind="add", hours=24, limit=200):
     return _get(url, default=[]) or []
 
 
-@cache(ttl=600)
+@cache(ttl=180)          # moves mid-slate: injury rulings collapse a projection
 def projections(season, week, scoring="ppr"):
     """Undocumented but stable weekly projections endpoint.
     Returns {player_id: projected_points} for the given scoring key."""
