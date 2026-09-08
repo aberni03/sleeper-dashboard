@@ -586,10 +586,13 @@ def _diversify(ideas, max_ideas):
         return []
     order = sorted(ideas, key=lambda x: (trade_edge(x), x["fairness"]), reverse=True)
     # A deal can be perfectly fair and still pointless — swapping a first for a
-    # replacement-level body prices out fine and gains you nothing. Drop anything
-    # that doesn't actually move you forward, but never leave a league empty.
-    positive = [i for i in order if trade_edge(i) > 0]
-    order = positive if positive else order[:1]
+    # replacement-level body prices out fine and gains you nothing. The floor sits
+    # above zero rather than at it: a trade worth a fraction of a point is noise
+    # on a board meant to be scanned, and it crowds out the ones worth reading.
+    # A league is never left empty, though — the best idea always shows.
+    MIN_EDGE = 2.0
+    worth_it = [i for i in order if trade_edge(i) >= MIN_EDGE]
+    order = worth_it if worth_it else order[:1]
     picked, seen_shapes = [], set()
     for i in order:                       # one of each shape first
         if i["shape"] not in seen_shapes:

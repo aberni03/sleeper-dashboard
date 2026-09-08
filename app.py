@@ -1082,6 +1082,8 @@ def render_trade_calc():
                     unsafe_allow_html=True)
         return
 
+    # dynasty first: picks, and the deeper roster questions, live there
+    tradeable.sort(key=lambda c: (c["format"] != "dynasty", c["name"]))
     c1, c2 = st.columns(2)
     lname = c1.selectbox("League", [c["name"] for c in tradeable], key="calc_lg")
     ctx = next(c for c in tradeable if c["name"] == lname)
@@ -1190,9 +1192,15 @@ def render_trade_calc():
                           format_func=label, key="calc_recv")
 
     if not send and not recv:
+        picks_note = ("Rookie picks are in both lists, priced by their original "
+                      "owner's projected finish."
+                      if ctx["format"] == "dynasty" and v.pick_scale()
+                      else "No rookie picks here — this is a redraft league, so "
+                           "there are none to trade.")
         st.markdown('<div class="note">Pick players from each side to price the deal. '
                     f'Values are <b>FantasyCalc {esc(fmt)}</b>, format-adjusted for '
-                    f'{ctx["num_teams"]} teams{" · superflex" if ctx["superflex"] else ""}.</div>',
+                    f'{ctx["num_teams"]} teams'
+                    f'{" · superflex" if ctx["superflex"] else ""}. {picks_note}</div>',
                     unsafe_allow_html=True)
         return
 
