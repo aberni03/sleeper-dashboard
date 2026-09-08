@@ -16,17 +16,39 @@ streamlit run app.py
 Then open http://localhost:8501. Enter a Sleeper username at the top
 (defaults to `aberni3`). To stop: `pkill -f "streamlit run"`.
 
-## Reviving on another Mac (via iCloud Drive)
+## Working across two Macs
 
-1. This folder lives in iCloud Drive, so it's already synced to your other Mac.
-2. **Copy it out of iCloud to a local working folder** (recommended so iCloud
-   doesn't offload files while Streamlit runs):
+The folder lives in iCloud Drive, so edits sync between laptop and desktop
+automatically. Two rules keep that painless:
+
+1. **Don't edit on both machines at once.** Let iCloud finish syncing (Finder
+   shows no cloud/progress icon) before switching machines, or iCloud writes a
+   "conflicted copy" file. Git history is the safety net if it happens.
+2. **The venv is not in iCloud.** Each machine gets its own, since installed
+   packages are platform-specific:
    ```bash
-   cp -R ~/Library/Mobile\ Documents/com~apple~CloudDocs/sleeper-dashboard ~/sleeper-dashboard
-   cd ~/sleeper-dashboard
+   python3 -m venv ~/.venvs/sleeper-dashboard
+   ~/.venvs/sleeper-dashboard/bin/pip install -r requirements.txt
+   ~/.venvs/sleeper-dashboard/bin/streamlit run app.py
    ```
-3. Make sure Python 3.11+ is installed, then run the steps under **Run it** above.
-4. When you finish editing, copy the folder back to iCloud to save your changes.
+
+The ~16MB player cache also lives outside iCloud
+(`~/Library/Caches/sleeper-dashboard`) so it doesn't churn sync daily. Override
+with `SLEEPER_DATA_DIR` if you want it elsewhere; it re-downloads if deleted.
+
+## Deploying to Streamlit Community Cloud
+
+Streamlit Cloud deploys from GitHub, not iCloud, so the repo is the source of
+truth for the live site:
+
+1. Push to GitHub (`git push`).
+2. At https://share.streamlit.io, point a new app at the repo, branch `main`,
+   main file `app.py`.
+3. Deploys build from `requirements.txt` and redeploy on every push.
+
+Anything secret (a DynastyNerds key when `ENABLE_EXTERNAL` flips on) goes in the
+app's **Settings → Secrets** on Streamlit Cloud and in a local
+`.streamlit/secrets.toml` — which is gitignored. Never commit keys.
 
 ## Files
 

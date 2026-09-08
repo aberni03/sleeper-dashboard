@@ -1,11 +1,30 @@
 """Sleeper data layer — username-driven so the same code serves you and anyone
 you share the link with. All network calls are cached (in-memory via streamlit
 where available, and the big players file to disk)."""
-import os, json, time
+import os, sys, json, time
 import requests
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DATA = os.path.join(HERE, "data")
+
+
+def _data_dir():
+    """Where the big players file is cached.
+
+    Deliberately outside the source folder: this repo lives in iCloud Drive, and
+    a 16MB file rewritten daily would churn sync on every machine (and can be
+    offloaded out from under a running app). Override with SLEEPER_DATA_DIR.
+    """
+    env = os.environ.get("SLEEPER_DATA_DIR")
+    if env:
+        return env
+    if sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Caches")
+    else:                                                 # Linux, incl. Streamlit Cloud
+        base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return os.path.join(base, "sleeper-dashboard")
+
+
+DATA = _data_dir()
 os.makedirs(DATA, exist_ok=True)
 
 API = "https://api.sleeper.app/v1"
