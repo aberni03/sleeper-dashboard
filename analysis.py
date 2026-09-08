@@ -476,6 +476,25 @@ def _lineup_value(pids, ctx, valuer, players):
     return sum(valuer.value(pid) for _, pid in lu if pid)
 
 
+def trade_edge(idea):
+    """How good a deal is, in one number.
+
+    Lineup impact cannot be the primary key. A pick trade changes nothing this
+    Sunday by definition, and a bad team dumping a bench player for a first is
+    still its best available move — sorting on lineup delta buries exactly the
+    trades a rebuild should be making. So value over replacement leads, this
+    week's points and startable roster value contribute when they exist, and
+    partner fit is added because it is a different question from fairness:
+    fairness asks whether a deal is even, fit asks whether they'll say yes. A
+    rival thin at the position you're sending will tolerate a worse price.
+    """
+    return round(
+        idea["my_net"]
+        + max(0.0, idea.get("pts_delta", 0.0)) * 1.5
+        + max(0.0, idea.get("lineup_delta", 0.0)) * 0.5
+        + idea.get("partner_fit", 0.0) * 12.0, 2)
+
+
 def _surplus_over_replacement(rows, repl):
     """Sum of each player's value above his position's replacement level.
 
@@ -565,8 +584,12 @@ def _diversify(ideas, max_ideas):
     """
     if not ideas:
         return []
-    order = sorted(ideas, key=lambda x: (x["lineup_delta"] + x["pts_delta"],
-                                         x["my_net"], x["fairness"]), reverse=True)
+    order = sorted(ideas, key=lambda x: (trade_edge(x), x["fairness"]), reverse=True)
+    # A deal can be perfectly fair and still pointless — swapping a first for a
+    # replacement-level body prices out fine and gains you nothing. Drop anything
+    # that doesn't actually move you forward, but never leave a league empty.
+    positive = [i for i in order if trade_edge(i) > 0]
+    order = positive if positive else order[:1]
     picked, seen_shapes = [], set()
     for i in order:                       # one of each shape first
         if i["shape"] not in seen_shapes:
@@ -574,8 +597,7 @@ def _diversify(ideas, max_ideas):
             picked.append(i)
     rest = [i for i in order if i not in picked]
     picked = picked[:max_ideas] + rest[:max(0, max_ideas - len(picked))]
-    return sorted(picked, key=lambda x: (x["lineup_delta"] + x["pts_delta"],
-                                         x["my_net"], x["fairness"]),
+    return sorted(picked, key=lambda x: (trade_edge(x), x["fairness"]),
                   reverse=True)[:max_ideas]
 
 
@@ -762,6 +784,14 @@ def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
                         if not all(r["id"] in my_started for r in gets):
                             continue
 
+                    # how badly the partner needs what I'm sending — they'll
+                    # tolerate a worse price at a position they're thin at
+                    fit = 0.0
+                    for r in gives:
+                        a = avg.get(r["pos"], 0)
+                        if a:
+                            fit = max(fit, min(1.0, max(0.0,
+                                      (a - tm["strength"].get(r["pos"], 0)) / a)))
                     shape = f"{len(gives)}-for-{len(gets)}"
                     gnames = " + ".join(r["name"] for r in gives)
                     tnames = " + ".join(r["name"] for r in gets)
@@ -780,6 +810,7 @@ def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
                         "give_raw": sum(r["raw"] for r in gives),
                         "get_raw": sum(r["raw"] for r in gets),
                         "my_net": round(my_net, 1), "their_net": round(their_net, 1),
+                        "partner_fit": round(fit, 2),
                         "lineup_delta": lineup_delta, "their_lineup_delta": their_delta,
                         "pts_delta": pts_delta,
                         "my_pos_out": my_sur, "my_pos_in": my_need,
@@ -798,9 +829,7 @@ def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
     seen, headline, per_partner, per_give, uniq = set(), set(), {}, {}, []
     # rank on what the deal actually improves: startable roster value, this
     # week's points, then surplus over replacement and fairness
-    for i in sorted(ideas, key=lambda x: (x["lineup_delta"] + x["pts_delta"],
-                                          x["my_net"], x["fairness"]),
-                    reverse=True):
+    for i in sorted(ideas, key=lambda x: (trade_edge(x), x["fairness"]), reverse=True):
         key = (tuple(sorted(r["id"] for r in i["gives"])),
                tuple(sorted(r["id"] for r in i["gets"])))
         if key in seen:
@@ -821,6 +850,19 @@ def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
         per_give[out_key] = per_give.get(out_key, 0) + 1
         uniq.append(i)
     return uniq[:max_ideas]
+
+
+def _fit_for(ctx, valuer, players, rid, gives):
+    """Partner's positional need for what they're receiving, 0-1. Picks score 0:
+    everyone can use a pick, so it says nothing about acceptance."""
+    teams, avg = positional_strength(ctx, valuer, players)
+    strength = teams.get(rid, {}).get("strength", {})
+    fit = 0.0
+    for r in gives:
+        a = avg.get(r["pos"], 0)
+        if a and r["pos"] != "PICK":
+            fit = max(fit, min(1.0, max(0.0, (a - strength.get(r["pos"], 0)) / a)))
+    return round(fit, 2)
 
 
 def _pick_ideas(ctx, valuer, players, max_ideas=3, tolerance=0.30):
@@ -958,6 +1000,7 @@ def _pick_ideas(ctx, valuer, players, max_ideas=3, tolerance=0.30):
                 "their_lineup_delta": 0.0,
                 "pts_delta": round(_lineup_points(after, ctx, valuer, players) - base_pts, 1),
                 "my_pos_out": gives[0]["pos"], "my_pos_in": best[0]["pos"],
+                "partner_fit": _fit_for(ctx, valuer, players, rid, gives),
                 "fairness": round(100 - abs(g_raw - t_raw) / max(g_raw, t_raw) * 100, 0),
                 "package_adj": 0,
                 "rationale": (f'{why} You send '

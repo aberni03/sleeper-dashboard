@@ -1036,8 +1036,8 @@ def render_trade_ideas_global():
         kind = "dynasty asset" if ctx["format"] == "dynasty" else "win-now"
         hdr(ctx["name"])
         v = v_cache.setdefault(ctx["league_id"], valuer_for(ctx))
-        ranked = sorted(ideas, key=lambda x: (x["lineup_delta"] + x["pts_delta"],
-                                              x["my_net"]), reverse=True)
+        ranked = sorted(ideas, key=lambda x: (A.trade_edge(x), x["fairness"]),
+                        reverse=True)
         for t in ranked[:TOP_PER_LEAGUE]:
             tr = v.trend30(t["get"]["id"]) if hasattr(v, "trend30") else 0
             trend = (f'<div class="why" style="margin-top:6px">30-day trend on '
