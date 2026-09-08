@@ -38,17 +38,37 @@ with `SLEEPER_DATA_DIR` if you want it elsewhere; it re-downloads if deleted.
 
 ## Deploying to Streamlit Community Cloud
 
-Streamlit Cloud deploys from GitHub, not iCloud, so the repo is the source of
-truth for the live site:
+Deployed as a **private app**, so a handful of named people can use it while the
+FantasyPros layer stays on — that's personal use, not publishing to the web.
 
-1. Push to GitHub (`git push`).
-2. At https://share.streamlit.io, point a new app at the repo, branch `main`,
-   main file `app.py`.
-3. Deploys build from `requirements.txt` and redeploy on every push.
+1. Repo: <https://github.com/aberni03/sleeper-dashboard> (private).
+2. At <https://share.streamlit.io> → **Create app** → *Deploy a public app from
+   GitHub* → pick this repo, branch `main`, main file `app.py`.
+   A private repo yields a private app automatically.
+3. After it deploys: **⋮ → Settings → Sharing**, add each viewer's email. They
+   sign in with Google or a one-time email link. The cap is far above the
+   handful this is meant for; you get one private app on the free tier.
+4. Every push to `main` redeploys.
 
-Anything secret (a DynastyNerds key when `ENABLE_EXTERNAL` flips on) goes in the
-app's **Settings → Secrets** on Streamlit Cloud and in a local
-`.streamlit/secrets.toml` — which is gitignored. Never commit keys.
+### What the deployed app needs
+
+Nothing. No API keys, no secrets, no paid tier — Sleeper's API, FantasyCalc and
+FantasyPros are all reachable unauthenticated. `requirements.txt` is the whole
+build. Caches land in `~/.cache/sleeper-dashboard` on the container, which is
+writable.
+
+### Environment
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SLEEPER_DASH_FP` | on | Set to `0` to disable the FantasyPros layer. Do that **only** if the app is ever made public — serving their rankings to anyone with the link is redistribution. Off, everything falls back to Sleeper projections. |
+| `SLEEPER_DATA_DIR` | platform cache dir | Where the player file and rankings cache are written. |
+
+A cold container pays about 45 seconds on first load per scoring format: five
+FantasyPros requests spaced by the 5 second crawl delay their robots.txt asks
+for. It is cached on disk for 3 hours after that, and Community Cloud clears the
+disk when the app sleeps or redeploys, so the first visitor after a wake-up
+waits.
 
 ## Files
 
