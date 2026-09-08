@@ -102,6 +102,48 @@ div[data-baseweb="tab-border"]{display:none!important;}
   background:#0e1830;border:1px solid #23345a;border-radius:6px;padding:1px 6px;margin-bottom:2px;text-transform:uppercase;letter-spacing:.4px;}
 .ai .txt{color:#e7edf7;font-size:13px;} .ai .txt b{color:#fff;} .ai .txt .g{color:var(--grn);font-weight:700;} .ai .txt .r{color:var(--red);}
 .lane .none{color:#5b688a;font-size:12.5px;font-style:italic;}
+/* header stat rail (CFB-style metric strip) */
+.rail{display:flex;flex-wrap:wrap;align-items:center;gap:9px 28px;border-top:1px solid var(--line);
+  border-bottom:1px solid var(--line);padding:11px 4px;margin:2px 0 14px;}
+.rail .it{display:flex;align-items:baseline;gap:7px;}
+.rail .k{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:1.1px;color:var(--mut);}
+.rail .v{font-size:14.5px;font-weight:900;color:#eef3fc;font-family:'JetBrains Mono',monospace;}
+.rail .v.g{color:var(--grn);} .rail .v.c{color:var(--cyan);} .rail .v.a{color:var(--amb);} .rail .v.v{color:var(--vio);}
+.rail .sp{flex:1;min-width:8px;}
+.rail .upd{font-size:10.5px;color:#5b688a;letter-spacing:.7px;text-transform:uppercase;font-weight:700;}
+/* selected KPI tile */
+.kpi.on{border-color:var(--grn);box-shadow:0 0 0 1px rgba(25,229,155,.28) inset,0 0 24px rgba(25,229,155,.07);}
+/* st.pills -> screenshot filter chips */
+div[data-testid="stPills"] button,div[data-testid="stButtonGroup"] button{
+  border-radius:22px!important;border:1px solid var(--line)!important;background:transparent!important;
+  color:#9fb0d0!important;font-weight:700!important;font-size:12.5px!important;padding:6px 17px!important;}
+div[data-testid="stPills"] button:hover,div[data-testid="stButtonGroup"] button:hover{
+  border-color:#2e4470!important;color:#dbe4f7!important;}
+div[data-testid="stPills"] button[aria-checked="true"],div[data-testid="stButtonGroup"] button[aria-checked="true"],
+div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonGroup"] button[kind="pillsActive"]{
+  border-color:var(--grn)!important;color:var(--grn)!important;background:rgba(25,229,155,.10)!important;}
+/* league subheader inside an action lane (one per league, not per row) */
+.lane .lgh{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.9px;color:#8ea0c4;
+  margin:13px 0 7px;padding-bottom:4px;border-bottom:1px dashed #1c2942;}
+.lane .lgh.first{margin-top:2px;}
+.ai .why{color:#7e8db0;font-size:11px;display:block;margin-top:1px;line-height:1.35;}
+.ai .alt{color:var(--cyan);font-weight:700;}
+.ai .sl{color:#8ea0c4;font-weight:800;font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-right:4px;}
+.prow .whyline{color:#7e8db0;font-size:10.5px;font-weight:600;display:block;margin-top:2px;}
+.swap .side .alt{color:var(--cyan);font-weight:700;font-size:12.5px;}
+.swap .slotk{position:absolute;}
+/* trade calculator */
+.verdict{border-radius:14px;padding:13px 18px;margin:10px 0 4px;font-size:14px;font-weight:800;
+  border:1px solid var(--line);background:linear-gradient(160deg,var(--card),var(--card2));}
+.verdict.win{border-color:var(--grn);color:var(--grn);background:rgba(25,229,155,.08);}
+.verdict.even{border-color:#2e4470;color:#c7d2ea;}
+.verdict.lose{border-color:var(--red);color:var(--red);background:rgba(255,77,115,.07);}
+.verdict .sub{display:block;font-size:12px;font-weight:600;color:#9fb0d0;margin-top:4px;}
+/* league tag on a trade card */
+.trade .lg{display:inline-block;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;
+  color:#8ea0c4;background:#0e1830;border:1px solid #23345a;border-radius:6px;padding:2px 8px;margin-right:8px;}
+.trade .trend{font-size:11px;font-weight:800;margin-left:7px;}
+.trade .trend.up{color:var(--grn);} .trade .trend.dn{color:var(--red);}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -182,52 +224,122 @@ def digest_for(ctx):
         _DIGEST_CACHE[lid] = A.weekly_digest(ctx, valuer_for(ctx), players, trend)
     return _DIGEST_CACHE[lid]
 
-# ── global action center: every move across every league, in one place ────────
-def render_action_center():
-    lineup, waivers, trades = [], [], []
+_TRADE_CACHE = {}
+def trades_for(ctx, max_ideas=6):
+    """Trade ideas per league, computed once — the global tab and the per-league
+    detail view both read this."""
+    lid = ctx["league_id"]
+    if lid not in _TRADE_CACHE:
+        _TRADE_CACHE[lid] = A.trade_ideas(ctx, valuer_for(ctx), players, max_ideas=max_ideas)
+    return _TRADE_CACHE[lid]
+
+
+# ── header stat rail ──────────────────────────────────────────────────────────
+def render_stat_rail():
+    w = l = t = 0
+    for ctx in data["contexts"]:
+        me = ctx["my_roster"]
+        if me:
+            w += me["wins"]; l += me["losses"]; t += me["ties"]
+    n_moves = n_trades = 0
     for ctx in data["contexts"]:
         d = digest_for(ctx)
-        tag = ctx["name"]
         ss = d["start_sit"]
-        if ss:
-            for s_in, s_out in zip(ss["start"], ss["sit"]):
-                lineup.append((tag, s_in, s_out))
-        for w in d["waiver_rows"][:2]:
-            waivers.append((tag, w))
-        for t in d["trade_rows"][:1]:
-            trades.append((tag, t))
-    waivers.sort(key=lambda x: x[1]["buzz"], reverse=True)
+        n_moves += len(ss["start"]) if ss else 0
+        n_trades += len(trades_for(ctx))
+    rec = f"{w}-{l}" + (f"-{t}" if t else "")
+    pct = (100.0 * w / (w + l)) if (w + l) else 0.0
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        upd = datetime.now(ZoneInfo("America/New_York")).strftime("%-I:%M %p ET")
+    except Exception:
+        upd = ""
+    items = [
+        ("Combined record", rec, "g" if pct >= 50 else ""),
+        ("Win %", f"{pct:.0f}%", "g" if pct >= 50 else "a"),
+        ("Lineup moves", str(n_moves), "c"),
+        ("Trade ideas", str(n_trades), "a"),
+        ("Leagues", f"{len(data['contexts'])}", "v"),
+    ]
+    inner = "".join(f'<div class="it"><span class="k">{esc(k)}</span>'
+                    f'<span class="v {c}">{esc(v)}</span></div>' for k, v, c in items)
+    st.markdown(f'<div class="rail">{inner}<div class="sp"></div>'
+                f'<div class="upd">Updated {esc(upd)}</div></div>', unsafe_allow_html=True)
 
-    n_l, n_w, n_t = len(lineup), len(waivers), len(trades)
+
+# ── global action center: every move across every league, in one place ────────
+def render_action_center():
+    ctxs = data["contexts"]
+    opts = ["All leagues"] + [c["name"] for c in ctxs]
+    pick = st.pills("League", opts, default="All leagues", key="ac_league",
+                    label_visibility="collapsed") or "All leagues"
+    active = ctxs if pick == "All leagues" else [c for c in ctxs if c["name"] == pick]
+
+    lineup, waivers, trades = {}, {}, {}
+    for ctx in active:
+        d = digest_for(ctx)
+        nm = ctx["name"]
+        ss = d["start_sit"]
+        if ss and ss["swaps"]:
+            lineup[nm] = ss["swaps"]
+        w = [x for x in d["waiver_rows"][:3] if x["score"] > 0]
+        if w:
+            waivers[nm] = w
+        t = trades_for(ctx)[:2]
+        if t:
+            trades[nm] = t
+
+    n_l = sum(len(v) for v in lineup.values())
+    n_w = sum(len(v) for v in waivers.values())
+    n_t = sum(len(v) for v in trades.values())
+    scope = f"{len(active)} league" + ("s" if len(active) != 1 else "")
     st.markdown(
         f'<div class="actionwrap"><div class="actionhd">⚡ This Week — Every League at Once</div>'
-        f'<div class="actionsub">One scan instead of logging into {len(data["contexts"])} leagues: '
+        f'<div class="actionsub">One scan instead of logging into {scope}: '
         f'<b>{n_l}</b> lineup changes · <b>{n_w}</b> waiver targets · <b>{n_t}</b> trade ideas.</div></div>',
         unsafe_allow_html=True)
+
+    def lane(cls, title, groups, item_fn, empty):
+        """One column. Each league name appears once as a subheader, then its rows."""
+        if not groups:
+            body = f'<div class="none">{empty}</div>'
+        else:
+            parts = []
+            for i, (nm, items) in enumerate(groups.items()):
+                parts.append(f'<div class="lgh{" first" if i == 0 else ""}">{esc(nm)}</div>')
+                parts.extend(item_fn(x) for x in items)
+            body = "".join(parts)
+        st.markdown(f'<div class="lane"><div class="lh {cls}">{title}</div>{body}</div>',
+                    unsafe_allow_html=True)
+
+    def swap_item(sw):
+        alt = "".join(f' <span class="alt">or {esc(a["name"])}</span>' for a in sw["alts"])
+        gain = f' <span class="g">+{sw["gain"]:.1f}</span>' if sw["gain"] > 0 else ""
+        return (f'<span class="ai"><span class="txt"><span class="sl">{esc(sw["slot"])}</span>'
+                f'Start <b class="g">{esc(sw["in"]["name"])}</b>{alt} '
+                f'over <span class="r">{esc(sw["out"]["name"])}</span>{gain}</span></span>')
+
+    def waiver_item(w):
+        return (f'<span class="ai"><span class="txt">Add <b>{esc(w["name"])}</b> '
+                f'{esc(w["pos"])}</span>'
+                + (f'<span class="why">{esc(w["why"])}</span>' if w.get("why") else "")
+                + '</span>')
+
+    def trade_item(t):
+        return (f'<span class="ai"><span class="txt">Give <span class="r">{esc(t["give"]["name"])}</span> '
+                f'→ get <b class="g">{esc(t["get"]["name"])}</b></span>'
+                f'<span class="why">vs {esc(t["partner"])} · {t["fairness"]:.0f}% fair</span></span>')
+
     cols = st.columns(3)
     with cols[0]:
-        items = "".join(
-            f'<span class="ai"><span class="tag">{esc(tag)}</span><br>'
-            f'<span class="txt">Start <b class="g">{esc(a["name"])}</b> ({a["pts"]:.1f}) '
-            f'over <span class="r">{esc(b["name"])}</span></span></span>'
-            for tag, a, b in lineup[:8]) or '<div class="none">All lineups optimal 🎉</div>'
-        st.markdown(f'<div class="lane"><div class="lh s">🟢 Lineup changes</div>{items}</div>', unsafe_allow_html=True)
+        lane("s", "🟢 Lineup changes", lineup, swap_item, "All lineups optimal 🎉")
     with cols[1]:
-        def witem(tag, w):
-            buzz = f' · +{w["buzz"]:,} adds' if w["buzz"] else ""
-            return (f'<span class="ai"><span class="tag">{esc(tag)}</span><br>'
-                    f'<span class="txt">Add <b>{esc(w["name"])}</b> {esc(w["pos"])}{buzz}</span></span>')
-        items = "".join(witem(tag, w) for tag, w in waivers[:8]) or '<div class="none">No standout adds</div>'
-        st.markdown(f'<div class="lane"><div class="lh w">🔵 Waiver targets</div>{items}</div>', unsafe_allow_html=True)
+        lane("w", "🔵 Waiver targets", waivers, waiver_item, "No standout adds")
     with cols[2]:
-        items = "".join(
-            f'<span class="ai"><span class="tag">{esc(tag)}</span><br>'
-            f'<span class="txt">Give <span class="r">{esc(t["give"]["name"])}</span> '
-            f'→ get <b class="g">{esc(t["get"]["name"])}</b> <span style="color:#7e8db0">vs {esc(t["partner"])}</span></span></span>'
-            for tag, t in trades[:8]) or '<div class="none">No clear win-win yet</div>'
-        st.markdown(f'<div class="lane"><div class="lh t">🟡 Trade ideas</div>{items}</div>', unsafe_allow_html=True)
+        lane("t", "🟡 Trade ideas", trades, trade_item, "No clear win-win yet")
 
-# ── renderers ─────────────────────────────────────────────────────────────────
+# ── renderers ─# ── renderers ─────────────────────────────────────────────────────────────────
 def render_digest_card(ctx, klass):
     d = digest_for(ctx)
     me = ctx["my_roster"]
@@ -270,13 +382,19 @@ def render_startsit(ctx):
     if not ss:
         st.markdown('<div class="empty">Couldn\'t find your roster in this league.</div>', unsafe_allow_html=True)
         return
-    if ss["start"] and ss["sit"]:
+    if ss["swaps"]:
         hdr("Recommended changes")
-        for s_in, s_out in zip(ss["start"], ss["sit"]):
+        for sw in ss["swaps"]:
+            s_in, s_out = sw["in"], sw["out"]
+            alt = "".join(
+                f'<div class="alt">or {esc(a["name"])} '
+                f'<span class="m">{esc(a["pos"])}·{a["pts"]:.1f}</span></div>'
+                for a in sw["alts"])
+            gain = f' · <span style="color:#19e59b">+{sw["gain"]:.1f}</span>' if sw["gain"] > 0 else ""
             st.markdown(
-                f'<div class="swap"><div class="side"><div class="k in">START</div>'
+                f'<div class="swap"><div class="side"><div class="k in">START · {esc(sw["slot"])}{gain}</div>'
                 f'<div class="n">{esc(s_in["name"])} <span class="m">{esc(s_in["pos"])}·{esc(s_in["team"])} '
-                f'· {s_in["pts"]:.1f} pts</span></div></div><div class="ar">▶</div>'
+                f'· {s_in["pts"]:.1f} pts</span></div>{alt}</div><div class="ar">▶</div>'
                 f'<div class="side"><div class="k out">SIT</div>'
                 f'<div class="n">{esc(s_out["name"])} <span class="m">{esc(s_out["pos"])}·{esc(s_out["team"])} '
                 f'· {s_out["pts"]:.1f} pts</span></div></div></div>', unsafe_allow_html=True)
@@ -297,14 +415,15 @@ def render_waivers(ctx):
     if not rows:
         st.markdown('<div class="empty">No available players surfaced.</div>', unsafe_allow_html=True)
         return
-    hdr("Top available — value + trending buzz")
+    hdr("Top available — lineup gain, positional need, then buzz")
     st.markdown('<div class="thead"><div>BUZZ</div><div>PLAYER</div><div>POS</div><div>PROJ</div><div>VAL</div></div>', unsafe_allow_html=True)
     for r in rows:
         buzz = f'+{r["buzz"]:,}' if r["buzz"] else "—"
         pts = f'{r["pts"]:.1f}' if r["pts"] else "—"
+        why = f'<span class="whyline">{esc(r["why"])}</span>' if r.get("why") else ""
         st.markdown(
             f'<div class="prow st"><div class="slot">{buzz}</div>'
-            f'<div class="nm">{esc(r["name"])}<span class="tm">{esc(r["team"])}</span>{inj_tag(r)}</div>'
+            f'<div class="nm">{esc(r["name"])}<span class="tm">{esc(r["team"])}</span>{inj_tag(r)}{why}</div>'
             f'<div class="pos">{esc(r["pos"])}</div><div class="pts">{pts}</div>'
             f'<div class="val">{r["val"]:.0f}</div></div>', unsafe_allow_html=True)
 
@@ -324,7 +443,7 @@ def render_trades(ctx):
             delta = "▲" if mv >= av else "▼"
             col.markdown(f'<div class="kpi"><div class="n {cls}">{mv:.0f}</div>'
                          f'<div class="l">{pos} · {delta} avg {av:.0f}</div></div>', unsafe_allow_html=True)
-    ideas = A.trade_ideas(ctx, v, players, max_ideas=6)
+    ideas = trades_for(ctx)
     hdr("Win-win trade ideas")
     kind = "dynasty asset" if ctx["format"] == "dynasty" else "win-now"
     if not ideas:
@@ -332,15 +451,199 @@ def render_trades(ctx):
                     'this sharpens a lot once external trade values are connected.</div>', unsafe_allow_html=True)
         return
     for t in ideas:
-        st.markdown(
-            f'<div class="trade"><div class="top"><div class="p">vs {esc(t["partner"])} '
+        st.markdown(trade_card(t, ctx), unsafe_allow_html=True)
+
+
+def trade_leg(rows, kind):
+    """One side of a deal. Shows FantasyCalc's own value per player so the number
+    can be checked against fantasycalc.com directly."""
+    k = "r" if kind == "give" else "g"
+    label = "YOU GIVE" if kind == "give" else "YOU GET"
+    body = "".join(
+        f'<div class="n">{esc(r["name"])} <span class="m">{esc(r["pos"])}·{esc(r["team"])}'
+        + (f' · {r["raw"]:,}' if r.get("raw") else "") + '</span></div>'
+        for r in rows)
+    return f'<div class="leg"><div class="k {k}">{label}</div>{body}</div>'
+
+
+def trade_card(t, ctx, extra=""):
+    kind = "dynasty asset" if ctx["format"] == "dynasty" else "win-now"
+    gives, gets = t.get("gives", [t["give"]]), t.get("gets", [t["get"]])
+    shape = f'<span class="lg">{esc(t.get("shape", "1-for-1"))}</span>'
+    return (f'<div class="trade"><div class="top">'
+            f'<div class="p">{shape}vs {esc(t["partner"])} '
             f'<span class="w">· {kind} values</span></div>'
             f'<div class="fair">{t["fairness"]:.0f}% fair</div></div>'
-            f'<div class="legs"><div class="leg"><div class="k r">YOU GIVE</div>'
-            f'<div class="n">{esc(t["give"]["name"])} <span class="m">{esc(t["give"]["pos"])} · {t["give"]["val"]:.0f}</span></div></div>'
-            f'<div class="leg"><div class="k g">YOU GET</div>'
-            f'<div class="n">{esc(t["get"]["name"])} <span class="m">{esc(t["get"]["pos"])} · {t["get"]["val"]:.0f}</span></div></div></div>'
-            f'<div class="why">{esc(t["rationale"])}</div></div>', unsafe_allow_html=True)
+            f'<div class="legs">{trade_leg(gives, "give")}{trade_leg(gets, "get")}</div>'
+            f'{extra}<div class="why">{esc(t["rationale"])}</div></div>')
+
+
+# ── global trade ideas tab: every league's win-win swaps in one board ─────────
+def render_trade_ideas_global():
+    pool, blocked = [], []
+    for ctx in data["contexts"]:
+        if ctx["trades_disabled"]:
+            blocked.append(ctx["name"])
+            continue
+        for t in trades_for(ctx):
+            pool.append((ctx, t))
+
+    if not pool:
+        st.markdown('<div class="empty">No clean win-win surfaced across your leagues right now. '
+                    'Ideas appear when one of your surplus positions lines up with a rival\'s need '
+                    'at comparable value.</div>', unsafe_allow_html=True)
+        if blocked:
+            st.markdown(f'<div class="note">🔒 Trades disabled in: <b>{esc(", ".join(blocked))}</b> '
+                        '(guillotine/elimination format).</div>', unsafe_allow_html=True)
+        return
+
+    dyn = [x for x in pool if x[0]["format"] == "dynasty"]
+    rd = [x for x in pool if x[0]["format"] != "dynasty"]
+    best = max(t["fairness"] for _, t in pool)
+
+    kc = st.columns(4)
+    tiles = [(len(pool), "Total ideas", "g", True), (len(dyn), "Dynasty", "v", False),
+             (len(rd), "Redraft", "c", False), (f"{best:.0f}%", "Best fairness", "g", False)]
+    for col, (n, l, cls, on) in zip(kc, tiles):
+        col.markdown(f'<div class="kpi{" on" if on else ""}"><div class="n {cls}">{n}</div>'
+                     f'<div class="l">{esc(l)}</div></div>', unsafe_allow_html=True)
+
+    fmt_opts = ["All ideas", f"Dynasty ({len(dyn)})", f"Redraft ({len(rd)})"]
+    pick = st.pills("Format", fmt_opts, default="All ideas", key="trade_fmt",
+                    label_visibility="collapsed") or "All ideas"
+    rows = dyn if pick.startswith("Dynasty") else rd if pick.startswith("Redraft") else pool
+
+    if not rows:
+        st.markdown('<div class="empty">No ideas in that format.</div>', unsafe_allow_html=True)
+        return
+
+    # group by league, best idea first within each — mirrors the day-grouped board
+    by_league = {}
+    for ctx, t in rows:
+        by_league.setdefault(ctx["name"], (ctx, []))[1].append(t)
+    order = sorted(by_league.values(), key=lambda x: max(t["fairness"] for t in x[1]), reverse=True)
+
+    v_cache = {}
+    for ctx, ideas in order:
+        kind = "dynasty asset" if ctx["format"] == "dynasty" else "win-now"
+        hdr(ctx["name"])
+        v = v_cache.setdefault(ctx["league_id"], valuer_for(ctx))
+        for t in sorted(ideas, key=lambda x: x["my_net"], reverse=True):
+            tr = v.trend30(t["get"]["id"]) if hasattr(v, "trend30") else 0
+            trend = (f'<div class="why" style="margin-top:6px">30-day trend on '
+                     f'{esc(t["get"]["name"])}: '
+                     f'<span class="trend {"up" if tr > 0 else "dn"}">'
+                     f'{"▲" if tr > 0 else "▼"} {abs(tr):,}</span></div>') if tr else ""
+            st.markdown(trade_card(t, ctx, trend), unsafe_allow_html=True)
+
+    if blocked:
+        st.markdown(f'<div class="note" style="margin-top:16px">🔒 Trades disabled in: '
+                    f'<b>{esc(", ".join(blocked))}</b> (guillotine/elimination format).</div>',
+                    unsafe_allow_html=True)
+
+
+# ── interactive trade calculator ──────────────────────────────────────────────
+def render_trade_calc():
+    tradeable = [c for c in data["contexts"] if not c["trades_disabled"] and c["my_roster"]]
+    if not tradeable:
+        st.markdown('<div class="empty">No leagues with trading enabled.</div>',
+                    unsafe_allow_html=True)
+        return
+
+    c1, c2 = st.columns(2)
+    lname = c1.selectbox("League", [c["name"] for c in tradeable], key="calc_lg")
+    ctx = next(c for c in tradeable if c["name"] == lname)
+    partners = [t for t in ctx["teams"] if not t["is_mine"]]
+    if not partners:
+        st.markdown('<div class="empty">No other teams found.</div>', unsafe_allow_html=True)
+        return
+    pname = c2.selectbox("Trade partner", [t["name"] for t in partners], key="calc_pt")
+    partner = next(t for t in partners if t["name"] == pname)
+    me = next(t for t in ctx["teams"] if t["is_mine"])
+
+    v = valuer_for(ctx)
+    fmt = "dynasty" if ctx["format"] == "dynasty" else "redraft"
+
+    def rows_for(team):
+        rows = [{**pinfo(pid, players), "raw": v.raw_value(pid),
+                 "val": v.value(pid), "pts": v.points(pid)} for pid in team["players"]]
+        return sorted(rows, key=lambda r: (r["raw"], r["val"]), reverse=True)
+
+    mine_rows, their_rows = rows_for(me), rows_for(partner)
+    look = {r["id"]: r for r in mine_rows + their_rows}
+
+    def label(pid):
+        r = look[pid]
+        tag = f'{r["raw"]:,}' if r["raw"] else "unpriced"
+        return f'{r["name"]} · {r["pos"]}-{r["team"]} · {tag}'
+
+    s1, s2 = st.columns(2)
+    send = s1.multiselect("You send", [r["id"] for r in mine_rows],
+                          format_func=label, key="calc_send")
+    recv = s2.multiselect("You get", [r["id"] for r in their_rows],
+                          format_func=label, key="calc_recv")
+
+    if not send and not recv:
+        st.markdown('<div class="note">Pick players from each side to price the deal. '
+                    f'Values are <b>FantasyCalc {esc(fmt)}</b>, format-adjusted for '
+                    f'{ctx["num_teams"]} teams{" · superflex" if ctx["superflex"] else ""}.</div>',
+                    unsafe_allow_html=True)
+        return
+
+    give_rows = [look[p] for p in send]
+    get_rows = [look[p] for p in recv]
+    gr = sum(r["raw"] for r in give_rows)
+    tr_ = sum(r["raw"] for r in get_rows)
+    diff = tr_ - gr
+    fairness = (100 - abs(diff) / max(gr, tr_) * 100) if max(gr, tr_) else 0
+
+    kc = st.columns(4)
+    tiles = [(f"{gr:,}", "You send", "", False), (f"{tr_:,}", "You get", "", False),
+             (f"{diff:+,}", "Net value", "g" if diff >= 0 else "", diff >= 0),
+             (f"{fairness:.0f}%", "Fairness", "g" if fairness >= 85 else "c", False)]
+    for col, (n, l, cls, on) in zip(kc, tiles):
+        col.markdown(f'<div class="kpi{" on" if on else ""}"><div class="n {cls}">{n}</div>'
+                     f'<div class="l">{esc(l)}</div></div>', unsafe_allow_html=True)
+
+    # value over replacement for both rosters — the "does this actually help" test
+    ded = A._dedicated_slots(ctx["roster_positions"])
+    my_repl = A._replacement(ctx, v, players, me["roster_id"], ded)
+    their_repl = A._replacement(ctx, v, players, partner["roster_id"], ded)
+    my_net = (A._surplus_over_replacement(get_rows, my_repl)
+              - A._surplus_over_replacement(give_rows, my_repl))
+    their_net = (A._surplus_over_replacement(give_rows, their_repl)
+                 - A._surplus_over_replacement(get_rows, their_repl))
+
+    # weekly lineup impact on my roster
+    my_pids = [str(x) for x in me["players"]]
+    after = [x for x in my_pids if x not in set(send)] + list(recv)
+
+    def lp(pids):
+        lu, _ = A.optimal_lineup(pids, ctx["roster_positions"], players, v.start_score)
+        return sum(v.points(pid) for _, pid in lu if pid)
+
+    d_pts = lp(after) - lp(my_pids)
+
+    if my_net > 0 and their_net > 0:
+        cls, head = "win", "Win-win — both rosters improve over replacement"
+    elif my_net > 0:
+        cls, head = "even", "Good for you — but they have little reason to accept"
+    elif my_net <= 0 and their_net > 0:
+        cls, head = "lose", "You're giving up more than you get"
+    else:
+        cls, head = "even", "Neither side clearly gains"
+    st.markdown(
+        f'<div class="verdict {cls}">{esc(head)}'
+        f'<span class="sub">Your value over replacement {my_net:+.1f} · '
+        f'theirs {their_net:+.1f} · this week\'s projected lineup '
+        f'{d_pts:+.1f} pts</span></div>', unsafe_allow_html=True)
+
+    if len(send) != len(recv) and send and recv:
+        st.markdown(f'<div class="note">📦 <b>{len(send)}-for-{len(recv)}</b> — the side '
+                    'receiving fewer players needs the best player in the deal, and the side '
+                    'sending more frees a roster spot. Value over replacement above already '
+                    'accounts for the depth you keep.</div>', unsafe_allow_html=True)
+
 
 # ── group section (dynasty / redraft) ─────────────────────────────────────────
 def render_group(group_key, klass, label):
@@ -366,17 +669,24 @@ def render_group(group_key, klass, label):
     with tabs[3]:
         render_trades(ctx)
 
-# ── global action center (the one-stop-shop payoff) ───────────────────────────
-render_action_center()
+# ── header stat rail ──────────────────────────────────────────────────────────
+render_stat_rail()
 
-# ── top-level split: Dynasty vs Redraft/Guillotine ────────────────────────────
-top = st.tabs([f"🟣 DYNASTY ({ndyn})", f"🔵 REDRAFT / GUILLOTINE ({nrd})"])
+# ── top-level board ───────────────────────────────────────────────────────────
+top = st.tabs(["⚡ This Week", "🤝 Trade Ideas", "🧮 Trade Calculator",
+               f"🟣 Dynasty ({ndyn})", f"🔵 Redraft / Guillotine ({nrd})"])
 with top[0]:
-    render_group("dynasty", "dyn", "Dynasty")
+    render_action_center()
 with top[1]:
+    render_trade_ideas_global()
+with top[2]:
+    render_trade_calc()
+with top[3]:
+    render_group("dynasty", "dyn", "Dynasty")
+with top[4]:
     render_group("redraft", "rd", "Redraft / Guillotine")
 
 st.markdown('<div class="note" style="margin-top:22px">Data: Sleeper public API · '
-            'Projections live · Trade values proxy until the API step. '
+            'Projections live · Trade values from FantasyCalc. '
             'Share this dashboard — anyone can enter their own Sleeper username above (or use <b>?u=username</b>).</div>',
             unsafe_allow_html=True)
