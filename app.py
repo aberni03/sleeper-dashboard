@@ -5,6 +5,7 @@ import streamlit as st
 import sleeper as S
 import analysis as A
 import values as VAL
+import fantasypros as FP
 from values import Valuer, ENABLE_EXTERNAL, pinfo
 
 st.set_page_config(page_title="Fantasy Command Center", page_icon="🏈",
@@ -203,6 +204,22 @@ if not data["contexts"]:
 proj = S.projections(data["season"], data["week"], "ppr")
 trend = S.trending("add", 168, 250)
 
+# FantasyPros consensus, per scoring format actually in use across the leagues
+_fp_cache = {}
+def fp_for(ctx):
+    """Expert-consensus index for this league's scoring. Falls back to an empty
+    dict, so every downstream feature degrades to Sleeper projections alone."""
+    if not FP.ENABLE_FP:
+        return {}
+    rec = (ctx["league"].get("scoring_settings", {}) or {}).get("rec", 0)
+    slug = FP.scoring_slug(rec)
+    if slug not in _fp_cache:
+        try:
+            _fp_cache[slug] = FP.by_sleeper_id(slug, data["week"])["by_id"]
+        except Exception:
+            _fp_cache[slug] = {}
+    return _fp_cache[slug]
+
 # status line — flat, in the masthead's rhythm rather than another card
 ndyn, nrd = len(data["groups"]["dynasty"]), len(data["groups"]["redraft"])
 vmode = ('Values <span class="on">FantasyCalc</span>' if ENABLE_EXTERNAL
@@ -218,7 +235,7 @@ st.markdown(
 
 # ── per-league compute (cached objects are cheap; done once per render) ────────
 def valuer_for(ctx):
-    return Valuer(ctx, players, proj)
+    return Valuer(ctx, players, proj, fp=fp_for(ctx))
 
 _DIGEST_CACHE = {}
 def digest_for(ctx):
@@ -235,6 +252,91 @@ def trades_for(ctx, max_ideas=6):
     if lid not in _TRADE_CACHE:
         _TRADE_CACHE[lid] = A.trade_ideas(ctx, valuer_for(ctx), players, max_ideas=max_ideas)
     return _TRADE_CACHE[lid]
+
+
+# ── expert consensus rankings table ──────────────────────────────────────────
+def render_rankings():
+    if not FP.ENABLE_FP:
+        st.markdown('<div class="note">Expert consensus is switched off '
+                    '(<b>ENABLE_FP</b>). Everything runs on Sleeper projections.</div>',
+                    unsafe_allow_html=True)
+        return
+
+    scorings = {}
+    for ctx in data["contexts"]:
+        rec = (ctx["league"].get("scoring_settings", {}) or {}).get("rec", 0)
+        scorings.setdefault(FP.scoring_slug(rec), []).append(ctx["name"])
+    labels = {"ppr": "Full PPR", "half-point-ppr": "Half PPR", "": "Standard"}
+    opts = [labels.get(k, k or "Standard") for k in scorings]
+    picked = st.pills("Scoring", opts, default=opts[0], key="rk_scoring",
+                      label_visibility="collapsed") or opts[0]
+    slug = next(k for k in scorings if labels.get(k, "Standard") == picked)
+
+    with st.spinner("Loading expert consensus…"):
+        idx = FP.by_sleeper_id(slug, data["week"])
+    rows = idx["by_id"]
+    if not rows:
+        st.markdown(f'<div class="note">No consensus published for week '
+                    f'<b>{data["week"]}</b> yet — FantasyPros posts these as the '
+                    'week approaches.</div>', unsafe_allow_html=True)
+        return
+
+    # who do I roster, and who is actually available?
+    mine, rostered = set(), set()
+    for ctx in data["contexts"]:
+        for t in ctx["teams"]:
+            for pid in t["players"]:
+                rostered.add(str(pid))
+                if t["is_mine"]:
+                    mine.add(str(pid))
+
+    n_exp_note = f'{len(rows)} players · week {data["week"]} · {esc(picked)}'
+    st.markdown(f'<div class="note">Expert consensus from FantasyPros — '
+                f'{n_exp_note}. <b>SD</b> is how much the experts disagree: near '
+                'zero means the room is unanimous, high means the call is a '
+                'coin flip.</div>', unsafe_allow_html=True)
+
+    c1, c2 = st.columns([2, 3])
+    pos_pick = c1.pills("Position", ["All", "QB", "RB", "WR", "TE"], default="All",
+                        key="rk_pos", label_visibility="collapsed") or "All"
+    who = c2.pills("Roster", ["Everyone", "My players", "Available"], default="Everyone",
+                   key="rk_who", label_visibility="collapsed") or "Everyone"
+
+    recs = []
+    for pid, d in rows.items():
+        if pos_pick != "All" and d["pos"] != pos_pick:
+            continue
+        if who == "My players" and pid not in mine:
+            continue
+        if who == "Available" and pid in rostered:
+            continue
+        recs.append((pid, d))
+    recs.sort(key=lambda x: (x[1]["ecr"] if x[1]["ecr"] is not None else 9999))
+
+    if not recs:
+        st.markdown('<div class="empty">Nothing matches that filter.</div>',
+                    unsafe_allow_html=True)
+        return
+
+    import pandas as pd
+    df = pd.DataFrame([{
+        "Rank": d["pos_rank"], "Player": d["name"], "Tm": d["team"],
+        "Opp": (d["opp"] or "").replace("vs. ", "vs "), "ECR": d["ecr"],
+        "Best": d["best"], "Worst": d["worst"], "SD": d["std"],
+        "Grade": d["grade"], "Rostered%": d["owned"],
+        "Mine": "✓" if pid in mine else ("" if pid in rostered else "FA"),
+    } for pid, d in recs])
+    st.dataframe(df, width="stretch", hide_index=True, height=560,
+                 column_config={
+                     "SD": st.column_config.NumberColumn(
+                         "SD", help="Expert disagreement — low is settled", format="%.2f"),
+                     "Rostered%": st.column_config.NumberColumn(format="%.0f%%"),
+                 })
+    if idx["unmatched"]:
+        st.markdown(f'<div class="note">{len(idx["unmatched"])} ranked players '
+                    f'could not be matched to a Sleeper id (mostly fullbacks and '
+                    f'alias spellings): {esc(", ".join(idx["unmatched"][:8]))}.</div>',
+                    unsafe_allow_html=True)
 
 
 # ── leagues overview: every league's shape and standing in one place ─────────
@@ -784,7 +886,7 @@ def render_trade_calc():
 render_stat_rail()
 
 # ── top-level board ───────────────────────────────────────────────────────────
-top = st.tabs(["⚡ This Week", "🤝 Trades", "🏆 Leagues"])
+top = st.tabs(["⚡ This Week", "🤝 Trades", "📊 Rankings", "🏆 Leagues"])
 with top[0]:
     render_action_center()
 with top[1]:
@@ -795,6 +897,8 @@ with top[1]:
     with sub[1]:
         render_trade_calc()
 with top[2]:
+    render_rankings()
+with top[3]:
     render_leagues_overview()
 
 st.markdown('<div class="note" style="margin-top:22px">Data: Sleeper public API · '

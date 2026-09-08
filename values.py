@@ -168,10 +168,11 @@ class Valuer:
     """One object per league that answers value/projection questions.
     Swaps transparently between proxy (now) and external (later)."""
 
-    def __init__(self, ctx, players, projections=None):
+    def __init__(self, ctx, players, projections=None, fp=None):
         self.ctx = ctx
         self.players = players
         self.proj = projections or {}
+        self.fp_idx = fp or {}
         self.mode = "external" if ENABLE_EXTERNAL else "proxy"
         self._ext = {}
         self._picks = None
@@ -247,6 +248,27 @@ class Valuer:
     def points(self, pid):
         """This-week projected points (0 if unknown)."""
         return self.proj.get(str(pid), 0.0)
+
+    def fp(self, pid):
+        """FantasyPros consensus row for this week: pos_rank, ecr, std, grade.
+        None when unmatched or when the FantasyPros layer is off."""
+        return self.fp_idx.get(str(pid))
+
+    def fp_pos_rank(self, pid):
+        """Numeric slice of 'WR12' -> 12. None when unranked."""
+        row = self.fp_idx.get(str(pid))
+        pr = (row or {}).get("pos_rank") or ""
+        digits = "".join(ch for ch in str(pr) if ch.isdigit())
+        return int(digits) if digits else None
+
+    def confidence(self, pid):
+        """How settled the experts are on this player, from their spread.
+        Projections cannot express this — one number never shows dissent."""
+        row = self.fp_idx.get(str(pid))
+        sd = (row or {}).get("std")
+        if sd is None:
+            return None
+        return "high" if sd <= 2.0 else "medium" if sd <= 5.0 else "low"
 
     def start_score(self, pid):
         """Ranking score for lineup decisions — projections if we have them, else value."""

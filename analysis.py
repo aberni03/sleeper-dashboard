@@ -58,8 +58,11 @@ def start_sit(ctx, valuer, players, alt_tol=0.75):
 
     def row(pid, slot=None):
         pi = pinfo(pid, players)
+        fp = valuer.fp(pid) or {}
         return {**pi, "slot": slot, "pts": round(valuer.points(pid), 1),
-                "val": round(valuer.value(pid), 1), "score": round(valuer.start_score(pid), 2)}
+                "val": round(valuer.value(pid), 1), "score": round(valuer.start_score(pid), 2),
+                "pos_rank": fp.get("pos_rank"), "ecr": fp.get("ecr"), "std": fp.get("std"),
+                "grade": fp.get("grade"), "opp": fp.get("opp")}
 
     lineup_rows = [row(pid, slot) for slot, pid in lineup if pid]
     bench_rows = [row(pid) for pid in bench if pinfo(pid, players)["pos"] in SKILL]
@@ -92,10 +95,13 @@ def start_sit(ctx, valuer, players, alt_tol=0.75):
                     and pinfo(b, players)["pos"] in elig
                     and abs(valuer.points(b) - best_pts) <= band
                     and valuer.points(b) > 0]
-            alts.sort(key=valuer.points, reverse=True)
+            # Projections are level by construction here, so ordering by them is
+            # noise. Expert consensus rank is the meaningful tiebreak.
+            alts.sort(key=lambda b: (valuer.fp_pos_rank(b) or 999, -valuer.points(b)))
         swaps.append({"slot": slot,
                       "in": row(pid, slot), "out": row(out, slot),
                       "alts": [row(a, slot) for a in alts[:2]],
+                      "confidence": valuer.confidence(pid),
                       "gain": round(best_pts - valuer.points(out), 1)})
 
     swaps.sort(key=lambda x: x["gain"], reverse=True)
@@ -179,7 +185,10 @@ def waiver_targets(ctx, valuer, players, trend_add, limit=12, shortlist=45):
         if val <= 0 and buzz == 0 and pts <= 0:
             continue
         pi = pinfo(pid, players)
+        fp = valuer.fp(pid) or {}
         cands.append({**pi, "val": round(val, 1), "buzz": buzz, "pts": round(pts, 1),
+                      "pos_rank": fp.get("pos_rank"), "ecr": fp.get("ecr"),
+                      "std": fp.get("std"), "grade": fp.get("grade"),
                       "pre": val + min(buzz / 500.0, 40) + pts * 1.5})
     cands.sort(key=lambda c: c["pre"], reverse=True)
 
@@ -193,8 +202,13 @@ def waiver_targets(ctx, valuer, players, trend_add, limit=12, shortlist=45):
         c["gain"] = gain
         c["need"] = nd
         c["bench_delta"] = bench_delta
+        # expert consensus: a WR30 sitting on the wire is a signal a projection
+        # can miss entirely, so a strong positional rank earns weight
+        pr = valuer.fp_pos_rank(c["id"])
+        fp_bonus = max(0.0, 60 - pr) * 0.25 if pr else 0.0
+        c["fp_bonus"] = round(fp_bonus, 1)
         c["score"] = round(gain * 8 + max(0.0, bench_delta) * 3 + c["pts"] * 1.0
-                           + nd * 20 + c["val"] * 0.30 + buzz_term, 1)
+                           + nd * 20 + c["val"] * 0.30 + buzz_term + fp_bonus, 1)
 
         why = []
         if gain > 0:
@@ -207,6 +221,8 @@ def waiver_targets(ctx, valuer, players, trend_add, limit=12, shortlist=45):
             why.append(f"you have almost nothing at {c['pos']}")
         elif nd >= 0.10:
             why.append(f"{nd*100:.0f}% below league avg at {c['pos']}")
+        if c.get("pos_rank"):
+            why.append(f"experts have him {c['pos_rank']} this week")
         if c["buzz"]:
             why.append(f"+{c['buzz']:,} adds this week")
         c["why"] = " · ".join(why)
