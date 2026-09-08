@@ -664,9 +664,7 @@ def render_guillotine():
         '<div class="actionsub">Coming soon — bid sizing for guillotine formats, where '
         'a team is eliminated each week and their whole roster hits the wire.</div></div>',
         unsafe_allow_html=True)
-    if not gl:
-        st.markdown('<div class="empty">No guillotine leagues on this account.</div>',
-                    unsafe_allow_html=True)
+    if not gl:                                  # tab is hidden in this case
         return
     for ctx in gl:
         me = ctx["my_roster"]
@@ -1234,8 +1232,14 @@ render_stat_rail()
 render_ticker()
 
 # ── top-level board ───────────────────────────────────────────────────────────
-top = st.tabs(["⚡ This Week", "🏆 Leagues", "📊 Rankings", "🤝 Trades",
-               "🪓 Guillotine FAAB Strategy (coming soon)"])
+# The guillotine tab only exists for accounts that actually play the format —
+# Sleeper flags it structurally as settings.type == 3, so this is not a guess.
+_has_guillotine = any(c["format"] == "guillotine" for c in data["contexts"])
+_labels = ["⚡ This Week", "🏆 Leagues", "📊 Rankings", "🤝 Trades"]
+if _has_guillotine:
+    _labels.append("🪓 Guillotine FAAB Strategy (coming soon)")
+
+top = st.tabs(_labels)
 with top[0]:
     render_action_center()
 with top[1]:
@@ -1249,8 +1253,9 @@ with top[3]:
         render_trade_calc()
     with sub[1]:
         render_trade_ideas_global()
-with top[4]:
-    render_guillotine()
+if _has_guillotine:
+    with top[4]:
+        render_guillotine()
 
 st.markdown('<div class="note" style="margin-top:22px">Data: Sleeper public API · '
             'Projections live · Trade values from FantasyCalc. '
