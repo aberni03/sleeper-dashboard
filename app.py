@@ -216,6 +216,11 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
 .lrow .rank .sd{display:block;color:#5b688a;font-size:9.5px;font-weight:600;letter-spacing:.2px;}
 .lrow .pts{color:#fff;font-weight:800;text-align:right;font-family:'JetBrains Mono',monospace;}
 .lrow .gr{text-align:center;font-weight:800;font-size:11px;color:#8ea0c4;}
+.pickerlbl{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.9px;
+  color:#8ea0c4;margin:2px 0 4px;}
+/* the calculator's filter chips sit tighter than the page-level ones */
+.stColumn div[data-testid="stPills"] button{padding:3px 11px!important;font-size:11.5px!important;}
+.stColumn div[data-testid="stPills"]{margin:0 0 5px;}
 /* weekly matchup, side by side */
 .mhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
   padding:0 2px 7px;border-bottom:1px solid var(--line);margin-bottom:7px;}
@@ -1264,11 +1269,37 @@ def render_trade_calc():
                 'league. Where a rival sits near the bottom is where they will '
                 'pay up.</div>', unsafe_allow_html=True)
 
+    has_picks = any(r["pos"] == "PICK" for r in mine_rows + their_rows)
+    filters = ["All", "QB", "RB", "WR", "TE"] + (["Picks"] if has_picks else [])
+
+    def narrow(rows, filter_key, select_key):
+        """Position filter over one side's list. Anything already selected stays
+        in the options even when it doesn't match — otherwise switching the
+        filter would silently drop players you'd already put in the deal."""
+        pick = st.pills("Filter", filters, default="All", key=filter_key,
+                        label_visibility="collapsed") or "All"
+        if pick == "All":
+            keep = rows
+        elif pick == "Picks":
+            keep = [r for r in rows if r["pos"] == "PICK"]
+        else:
+            keep = [r for r in rows if r["pos"] == pick]
+        ids = [r["id"] for r in keep]
+        chosen = st.session_state.get(select_key) or []
+        ids += [c for c in chosen if c not in ids]
+        return ids
+
     s1, s2 = st.columns(2)
-    send = s1.multiselect("You send", [r["id"] for r in mine_rows],
-                          format_func=label, key="calc_send")
-    recv = s2.multiselect("You get", [r["id"] for r in their_rows],
-                          format_func=label, key="calc_recv")
+    with s1:
+        st.markdown('<div class="pickerlbl">You send</div>', unsafe_allow_html=True)
+        send_opts = narrow(mine_rows, "calc_send_f", "calc_send")
+        send = st.multiselect("You send", send_opts, format_func=label,
+                              key="calc_send", label_visibility="collapsed")
+    with s2:
+        st.markdown('<div class="pickerlbl">You get</div>', unsafe_allow_html=True)
+        recv_opts = narrow(their_rows, "calc_recv_f", "calc_recv")
+        recv = st.multiselect("You get", recv_opts, format_func=label,
+                              key="calc_recv", label_visibility="collapsed")
 
     if not send and not recv:
         picks_note = ("Rookie picks are in both lists, priced by their original "
