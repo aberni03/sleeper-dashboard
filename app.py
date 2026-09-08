@@ -410,16 +410,13 @@ def render_rankings():
              else f'all {len(data["contexts"])} leagues')
     sf = bool(scope["superflex"]) if scope is not None else False
     board_name = "superflex" if sf else "flex"
-    qb_note = ("" if sf else
-               " — QBs have no flex rank in a 1QB league, which is correct: you "
-               "never start one in a flex slot")
+    qb_note = "" if sf else " (QBs aren't on the flex board, so theirs is blank)"
     st.markdown(f'<div class="note">Expert consensus from FantasyPros — '
                 f'{len(rows)} players · week {data["week"]} · {esc(picked)} · '
-                f'roster status from {where}.<br><b>Ovr</b> is the {esc(board_name)} '
-                'board, which ranks positions against each other so RB20 and WR22 '
-                f'are comparable{qb_note}. <b>SD</b> in the table is expert '
-                'disagreement on that player — near zero is unanimous, high means '
-                'the call is a coin flip.</div>', unsafe_allow_html=True)
+                f'roster status from {where}.<br><b>Ovr</b> is the FantasyPros '
+                f'{esc(board_name)} ranking{qb_note}. <b>SD</b> is expert '
+                'disagreement — near zero is unanimous, high means the call is a '
+                'coin flip.</div>', unsafe_allow_html=True)
 
     # Roster cuts only mean something inside one league — "available" across a
     # pool of five different rosters isn't a real category — so they appear only
@@ -470,8 +467,7 @@ def render_rankings():
     st.dataframe(df, width="stretch", hide_index=True, height=560,
                  column_config={
                      "Ovr": st.column_config.NumberColumn(
-                         "Ovr", help="Cross-position rank — compares RB20 vs WR22",
-                         format="%d"),
+                         "Ovr", help="FantasyPros flex ranking", format="%d"),
                      "SD": st.column_config.NumberColumn(
                          "SD", help="Expert disagreement — low is settled", format="%.2f"),
                      "Rostered%": st.column_config.NumberColumn(format="%.0f%%"),
@@ -602,8 +598,7 @@ def render_leagues_overview():
                 if watch:
                     st.markdown('<div class="note">Highlighted bench players score '
                                 'within reach of a starter they could legally replace. '
-                                '<b>FLEX</b> is the FantasyPros cross-position rank, so '
-                                'those numbers compare directly across positions.</div>',
+                                '<b>FLEX</b> is the FantasyPros flex ranking.</div>',
                                 unsafe_allow_html=True)
 
     # ── season to date, with projected finish ────────────────────────────────
