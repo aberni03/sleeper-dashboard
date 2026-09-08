@@ -511,12 +511,6 @@ def render_leagues_overview():
         col.markdown(f'<div class="kpi{" on" if on else ""}"><div class="n {cls}">{n}</div>'
                      f'<div class="l">{esc(lab)}</div></div>', unsafe_allow_html=True)
 
-    if not played:
-        st.markdown(f'<div class="note">Season totals show <b>TBD</b> until week '
-                    f'{data["week"]} results are final — every team is 0-0, so a '
-                    'finish or a point total would be noise. They fill in as games '
-                    'complete.</div>', unsafe_allow_html=True)
-
     pick = st.pills("League", [c["name"] for c in ctxs], default=ctxs[0]["name"],
                     key="lg_pick", label_visibility="collapsed") or ctxs[0]["name"]
     ctx = next(c for c in ctxs if c["name"] == pick)
