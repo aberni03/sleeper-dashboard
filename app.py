@@ -24,16 +24,16 @@ CSS = """
 *{font-family:'Inter',sans-serif;}
 .stApp{background:radial-gradient(1200px 500px at 15% -10%,#132449 0%,#070b16 55%) fixed;}
 #MainMenu,footer,header{visibility:hidden;}
-.block-container{padding-top:1rem;padding-bottom:3rem;max-width:1200px;}
+.block-container{padding-top:.6rem;padding-bottom:3rem;max-width:1200px;}
 .mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}
-.mast{padding:2px 2px 11px;}
+.mast{padding:0 2px 2px;}
 .mast h1{font-size:26px;font-weight:900;color:#fff;margin:0;letter-spacing:-.6px;
   display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;}
 .mast h1 .ac{background:linear-gradient(90deg,var(--grn),var(--cyan));
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
 .mast h1 .kicker{font-size:11px;font-weight:800;letter-spacing:1.7px;color:var(--mut);text-transform:uppercase;}
 .mast .sub{color:var(--mut);font-size:13px;margin-top:5px;}
-.statusline{display:flex;flex-wrap:wrap;gap:6px 22px;align-items:center;padding:9px 2px 0;
+.statusline{display:flex;flex-wrap:wrap;gap:6px 22px;align-items:center;padding:2px 2px 0;
   font-size:11px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;color:var(--mut);}
 .statusline b{color:#c7d2ea;}
 .statusline .on{color:var(--grn);}
@@ -115,7 +115,7 @@ div[data-baseweb="tab-border"]{display:none!important;}
 .lane .none{color:#5b688a;font-size:12.5px;font-style:italic;}
 /* header stat rail (CFB-style metric strip) */
 .rail{display:flex;flex-wrap:wrap;align-items:center;gap:9px 28px;border-top:1px solid var(--line);
-  border-bottom:1px solid var(--line);padding:11px 4px;margin:2px 0 14px;}
+  border-bottom:1px solid var(--line);padding:9px 4px;margin:8px 0 12px;}
 .rail .it{display:flex;align-items:baseline;gap:7px;}
 .rail .k{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:1.1px;color:var(--mut);}
 .rail .v{font-size:14.5px;font-weight:900;color:#eef3fc;font-family:'JetBrains Mono',monospace;}
@@ -194,6 +194,7 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
    tighten here rather than dropping columns, so no data disappears on a phone. */
 @media (max-width: 680px){
   .block-container{padding-left:.55rem;padding-right:.55rem;padding-top:.4rem;}
+  .mast{padding-bottom:6px;}
   .mast h1{font-size:20px;letter-spacing:-.4px;gap:7px;}
   .mast h1 .kicker{font-size:9.5px;letter-spacing:1.2px;}
   .mast .sub{font-size:12px;}
@@ -239,18 +240,21 @@ def inj_tag(pi):
 qp = st.query_params
 default_user = qp.get("u", "aberni3")
 
-st.markdown(
-    '<div class="mast"><h1>🏈 Fantasy <span class="ac">Command Center</span>'
-    '<span class="kicker">Sleeper</span></h1>'
-    '<div class="sub">Every lineup, waiver and trade decision across all your leagues — one scan.</div>'
-    '</div>', unsafe_allow_html=True)
-
-c1, c2 = st.columns([3, 1])
-with c1:
+# Masthead and the controls share one row, so nothing below is pushed down by a
+# full-width input that only needs a corner of the header.
+h1, h2, h3 = st.columns([6, 2, 1], vertical_alignment="center")
+with h1:
+    st.markdown(
+        '<div class="mast"><h1>🏈 Fantasy <span class="ac">Command Center</span>'
+        '<span class="kicker">Sleeper</span></h1>'
+        '<div class="sub">Every lineup, waiver and trade decision across all your '
+        'leagues — one scan.</div></div>', unsafe_allow_html=True)
+with h2:
     username = st.text_input("Sleeper username", value=default_user,
-                             label_visibility="collapsed", placeholder="Enter a Sleeper username…")
-with c2:
-    if st.button("↻ Refresh data", use_container_width=True):
+                             label_visibility="collapsed",
+                             placeholder="Sleeper username…")
+with h3:
+    if st.button("↻ Refresh", use_container_width=True):
         st.cache_data.clear(); st.rerun()
 
 if username and username != qp.get("u"):
