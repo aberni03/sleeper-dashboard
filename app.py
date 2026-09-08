@@ -611,6 +611,38 @@ def render_league_detail(ctx):
         render_trades(ctx)
 
 
+# ── guillotine FAAB strategy (placeholder) ───────────────────────────────────
+def render_guillotine():
+    gl = [c for c in data["contexts"] if c["format"] == "guillotine"]
+    st.markdown(
+        '<div class="actionwrap"><div class="actionhd">🪓 Guillotine FAAB Strategy</div>'
+        '<div class="actionsub">Coming soon — bid sizing for guillotine formats, where '
+        'a team is eliminated each week and their whole roster hits the wire.</div></div>',
+        unsafe_allow_html=True)
+    if not gl:
+        st.markdown('<div class="empty">No guillotine leagues on this account.</div>',
+                    unsafe_allow_html=True)
+        return
+    for ctx in gl:
+        me = ctx["my_roster"]
+        budget = ctx.get("waiver_budget") or 0
+        used = (me or {}).get("waiver_budget_used", 0)
+        left = budget - used
+        alive = len(ctx["teams"])
+        kc = st.columns(4)
+        tiles = [(f"{left:,}", "FAAB remaining", "g", True),
+                 (f"{budget:,}", "Starting budget", "", False),
+                 (alive, "Teams remaining", "c", False),
+                 (f"Wk {data['week']}", "Current week", "a", False)]
+        for col, (n, lab, cls, on) in zip(kc, tiles):
+            col.markdown(f'<div class="kpi{" on" if on else ""}"><div class="n {cls}">{n}</div>'
+                         f'<div class="l">{esc(lab)}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="note"><b>{esc(ctx["name"])}</b> · {alive} teams · '
+                    f'{esc(ctx["scoring_label"])}. Planned: pace your budget against the '
+                    'weeks left, price the eliminated roster hitting the wire, and flag '
+                    'the bids worth spending on.</div>', unsafe_allow_html=True)
+
+
 # ── header stat rail ──────────────────────────────────────────────────────────
 def render_stat_rail():
     w = l = t = 0
@@ -1107,20 +1139,23 @@ def render_trade_calc():
 render_stat_rail()
 
 # ── top-level board ───────────────────────────────────────────────────────────
-top = st.tabs(["⚡ This Week", "🤝 Trades", "📊 Rankings", "🏆 Leagues"])
+top = st.tabs(["⚡ This Week", "🏆 Leagues", "📊 Rankings", "🤝 Trades",
+               "🪓 Guillotine FAAB Strategy (coming soon)"])
 with top[0]:
     render_action_center()
 with top[1]:
-    # both are trade tools: browse suggestions, then price your own
+    render_leagues_overview()
+with top[2]:
+    render_rankings()
+with top[3]:
+    # both are trade tools: price your own deal, or browse suggestions
     sub = st.tabs(["🧮 Calculator", "💡 Ideas"])
     with sub[0]:
         render_trade_calc()
     with sub[1]:
         render_trade_ideas_global()
-with top[2]:
-    render_rankings()
-with top[3]:
-    render_leagues_overview()
+with top[4]:
+    render_guillotine()
 
 st.markdown('<div class="note" style="margin-top:22px">Data: Sleeper public API · '
             'Projections live · Trade values from FantasyCalc. '
