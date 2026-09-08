@@ -234,6 +234,30 @@ def trades_for(ctx, max_ideas=6):
     return _TRADE_CACHE[lid]
 
 
+# ── per-league deep dive ──────────────────────────────────────────────────────
+def render_league_detail(ctx):
+    """Standings, optimal lineup, waivers and trades for one league.
+
+    This used to be a top-level Dynasty/Redraft tab; it now hangs off the This
+    Week league filter, since picking a league there is the same choice.
+    """
+    me = ctx["my_roster"]
+    rec = (f'{me["wins"]}-{me["losses"]}' + (f'-{me["ties"]}' if me["ties"] else "")) if me else "—"
+    sf = ' · <b>superflex</b>' if ctx["superflex"] else ""
+    st.markdown(f'<div class="note">{esc(ctx["format"].title())} · {ctx["num_teams"]} teams · '
+                f'{esc(ctx["scoring_label"])}{sf} &nbsp;·&nbsp; your record: <b>{rec}</b></div>',
+                unsafe_allow_html=True)
+    tabs = st.tabs(["Overview", "Start / Sit", "Waivers", "Trades"])
+    with tabs[0]:
+        render_overview(ctx)
+    with tabs[1]:
+        render_startsit(ctx)
+    with tabs[2]:
+        render_waivers(ctx)
+    with tabs[3]:
+        render_trades(ctx)
+
+
 # ── header stat rail ──────────────────────────────────────────────────────────
 def render_stat_rail():
     w = l = t = 0
@@ -339,26 +363,11 @@ def render_action_center():
     with cols[2]:
         lane("t", "🟡 Trade ideas", trades, trade_item, "No clear win-win yet")
 
-# ── renderers ─# ── renderers ─────────────────────────────────────────────────────────────────
-def render_digest_card(ctx, klass):
-    d = digest_for(ctx)
-    me = ctx["my_roster"]
-    rec = f'{me["wins"]}-{me["losses"]}' + (f'-{me["ties"]}' if me["ties"] else "") if me else "—"
-    sf = ' <span class="badge sf">SF</span>' if ctx["superflex"] else ""
-    def block(cls, title, items, empty):
-        lis = "".join(f'<div class="i">• {esc(x)}</div>' for x in items) if items else f'<div class="none">{empty}</div>'
-        return f'<div class="mv"><div class="h {cls}">{title}</div>{lis}</div>'
-    ss = d["start_sit"]
-    line_items = d["lineup_moves"] or (["Lineup is already optimal"] if ss and ss["set_lineup"] else ["Set your Week %d lineup" % data["week"]])
-    st.markdown(
-        f'<div class="lgcard {klass}"><h3>{esc(ctx["name"])}</h3>'
-        f'<div class="meta">{esc(ctx["format"].title())}{sf} · {ctx["num_teams"]} teams · '
-        f'{esc(ctx["scoring_label"])} · <span class="rec">you: {rec}</span></div>'
-        + block("s", "Lineup", line_items, "—")
-        + block("w", "Waivers", d["waivers"], "No clear adds")
-        + block("t", "Trades", d["trades"], "No obvious win-win right now")
-        + '</div>', unsafe_allow_html=True)
+    if pick != "All leagues" and active:
+        hdr(f"{active[0]['name']} — league detail")
+        render_league_detail(active[0])
 
+# ── renderers ─────────────────────────────────────────────────────────────────
 def render_overview(ctx):
     hdr("Standings")
     for t in ctx["standings"]:
@@ -634,9 +643,11 @@ def render_trade_calc():
         cls, head = "even", "Neither side clearly gains"
     st.markdown(
         f'<div class="verdict {cls}">{esc(head)}'
-        f'<span class="sub">Your value over replacement {my_net:+.1f} · '
-        f'theirs {their_net:+.1f} · this week\'s projected lineup '
-        f'{d_pts:+.1f} pts</span></div>', unsafe_allow_html=True)
+        f'<span class="sub">Surplus over replacement — asset value on a 0–100 scale, '
+        f'<b>not</b> fantasy points: you {my_net:+.1f} · them {their_net:+.1f}'
+        f'&nbsp;&nbsp;·&nbsp;&nbsp; Week {data["week"]} projected lineup: '
+        f'<b>{d_pts:+.1f} pts</b> (weekly, not season-long)</span></div>',
+        unsafe_allow_html=True)
 
     if len(send) != len(recv) and send and recv:
         st.markdown(f'<div class="note">📦 <b>{len(send)}-for-{len(recv)}</b> — the side '
@@ -645,46 +656,17 @@ def render_trade_calc():
                     'accounts for the depth you keep.</div>', unsafe_allow_html=True)
 
 
-# ── group section (dynasty / redraft) ─────────────────────────────────────────
-def render_group(group_key, klass, label):
-    ctxs = data["groups"][group_key]
-    if not ctxs:
-        st.markdown(f'<div class="empty">No {label.lower()} leagues.</div>', unsafe_allow_html=True)
-        return
-    hdr(f"This week across your {label.lower()} leagues")
-    for ctx in ctxs:
-        render_digest_card(ctx, klass)
-
-    hdr("League detail")
-    names = [c["name"] for c in ctxs]
-    pick = st.selectbox("League", names, key=f"pick_{group_key}", label_visibility="collapsed")
-    ctx = next(c for c in ctxs if c["name"] == pick)
-    tabs = st.tabs(["Overview", "Start / Sit", "Waivers", "Trades"])
-    with tabs[0]:
-        render_overview(ctx)
-    with tabs[1]:
-        render_startsit(ctx)
-    with tabs[2]:
-        render_waivers(ctx)
-    with tabs[3]:
-        render_trades(ctx)
-
 # ── header stat rail ──────────────────────────────────────────────────────────
 render_stat_rail()
 
 # ── top-level board ───────────────────────────────────────────────────────────
-top = st.tabs(["⚡ This Week", "🤝 Trade Ideas", "🧮 Trade Calculator",
-               f"🟣 Dynasty ({ndyn})", f"🔵 Redraft / Guillotine ({nrd})"])
+top = st.tabs(["⚡ This Week", "🤝 Trade Ideas", "🧮 Trade Calculator"])
 with top[0]:
     render_action_center()
 with top[1]:
     render_trade_ideas_global()
 with top[2]:
     render_trade_calc()
-with top[3]:
-    render_group("dynasty", "dyn", "Dynasty")
-with top[4]:
-    render_group("redraft", "rd", "Redraft / Guillotine")
 
 st.markdown('<div class="note" style="margin-top:22px">Data: Sleeper public API · '
             'Projections live · Trade values from FantasyCalc. '

@@ -268,6 +268,12 @@ def _replacement(ctx, valuer, players, rid, dedicated):
 
 
 def _surplus_over_replacement(rows, repl):
+    """Sum of each player's value above his position's replacement level.
+
+    Units are the Valuer's 0-100 asset-value scale (normalized FantasyCalc) —
+    NOT fantasy points, and not season-long. The only points figure anywhere in
+    the app is Sleeper's weekly projection.
+    """
     return sum(max(0.0, r["val"] - repl.get(r["pos"], 0.0)) for r in rows)
 
 
