@@ -105,11 +105,15 @@ div[data-baseweb="tab-border"]{display:none!important;}
 .badge.sf{background:rgba(255,194,75,.16);color:var(--amb);} .badge.off{background:#2a3040;color:#8b93a7;}
 .empty{color:#5b688a;font-size:13px;font-style:italic;padding:8px 2px;}
 /* global action center */
-.actionwrap{background:linear-gradient(120deg,#122748,#0b1424);border:1px solid #24365d;border-radius:18px;
-  padding:16px 20px 8px;margin:6px 0 8px;position:relative;overflow:hidden;}
-.actionwrap:before{content:'';position:absolute;left:-30px;top:-40px;width:200px;height:200px;background:radial-gradient(circle,rgba(25,229,155,.14),transparent 70%);}
-.actionhd{font-size:15px;font-weight:900;color:#fff;letter-spacing:.3px;margin-bottom:2px;}
-.actionsub{color:var(--mut);font-size:12px;margin-bottom:12px;} .actionsub b{color:var(--grn);}
+.actionwrap{background:linear-gradient(120deg,#122748,#0b1424);border:1px solid #24365d;
+  border-radius:14px;padding:10px 16px;margin:4px 0 10px;position:relative;overflow:hidden;}
+.actionwrap:before{content:'';position:absolute;left:-30px;top:-50px;width:170px;height:170px;
+  background:radial-gradient(circle,rgba(25,229,155,.13),transparent 70%);}
+.actionhd{font-size:14.5px;font-weight:900;color:#fff;letter-spacing:.3px;margin:0;
+  display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap;}
+.actionhd .counts{font-size:11px;font-weight:700;color:var(--mut);letter-spacing:.5px;
+  text-transform:uppercase;} .actionhd .counts b{color:var(--grn);font-weight:900;}
+.actionsub{color:var(--mut);font-size:12px;margin:4px 0 2px;} .actionsub b{color:var(--grn);}
 .lane .lh{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.9px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #1c2942;}
 .lane .lh.s{color:var(--grn);} .lane .lh.w{color:var(--cyan);} .lane .lh.t{color:var(--amb);}
 .ai{display:block;margin-bottom:9px;line-height:1.4;} .ai .tag{display:inline-block;font-size:9.5px;font-weight:800;color:#8ea0c4;
@@ -764,12 +768,10 @@ def render_action_center():
     n_l = sum(len(v) for v in lineup.values())
     n_w = sum(len(v) for v in waivers.values())
     n_t = sum(len(v) for v in trades.values())
-    scope = f"{len(active)} league" + ("s" if len(active) != 1 else "")
     st.markdown(
-        f'<div class="actionwrap"><div class="actionhd">⚡ This Week — Every League at Once</div>'
-        f'<div class="actionsub">One scan instead of logging into {scope}: '
-        f'<b>{n_l}</b> lineup changes · <b>{n_w}</b> waiver targets · <b>{n_t}</b> trade ideas.</div></div>',
-        unsafe_allow_html=True)
+        f'<div class="actionwrap"><div class="actionhd">⚡ This Week — Every League at Once'
+        f'<span class="counts"><b>{n_l}</b> lineup · <b>{n_w}</b> waivers · '
+        f'<b>{n_t}</b> trades</span></div></div>', unsafe_allow_html=True)
 
     def lane(cls, title, groups, item_fn, empty):
         """One column. Each league name appears once as a subheader, then its rows."""
