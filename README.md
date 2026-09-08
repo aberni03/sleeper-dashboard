@@ -38,37 +38,41 @@ with `SLEEPER_DATA_DIR` if you want it elsewhere; it re-downloads if deleted.
 
 ## Deploying to Streamlit Community Cloud
 
-Deployed as a **private app**, so a handful of named people can use it while the
-FantasyPros layer stays on — that's personal use, not publishing to the web.
-
-1. Repo: <https://github.com/aberni03/sleeper-dashboard> (private).
+1. Repo: <https://github.com/aberni03/sleeper-dashboard> (public).
 2. At <https://share.streamlit.io> → **Create app** → *Deploy a public app from
-   GitHub* → pick this repo, branch `main`, main file `app.py`.
-   A private repo yields a private app automatically.
-3. After it deploys: **⋮ → Settings → Sharing**, add each viewer's email. They
-   sign in with Google or a one-time email link. The cap is far above the
-   handful this is meant for; you get one private app on the free tier.
-4. Every push to `main` redeploys.
+   GitHub* → this repo, branch `main`, main file `app.py`.
+3. Every push to `main` redeploys.
 
-### What the deployed app needs
+Nothing to configure: no API keys, no secrets, no paid tier. Sleeper,
+FantasyCalc and FantasyPros are all reachable unauthenticated, and
+`requirements.txt` is the whole build. Caches land in
+`~/.cache/sleeper-dashboard` on the container, which is writable.
 
-Nothing. No API keys, no secrets, no paid tier — Sleeper's API, FantasyCalc and
-FantasyPros are all reachable unauthenticated. `requirements.txt` is the whole
-build. Caches land in `~/.cache/sleeper-dashboard` on the container, which is
-writable.
+### Request budget
+
+The FantasyPros layer is the only thing that touches a site rather than an API,
+so its cadence follows how the data actually moves:
+
+| When | Refresh |
+| --- | --- |
+| Mon–Fri | once per calendar day, paid by whoever opens the app first |
+| Sat–Sun | hourly — inactives and injury rulings move the consensus |
+
+The cache is shared across sessions, so viewer count does not change the request
+count: three people cost the same as one. Requests are spaced by the 5 second
+crawl delay their robots.txt asks for, and `/nfl/rankings/` is a path that
+robots.txt permits (`/api/`, `/json/`, `/ajax/` and `/nfl/ranker/` are not, and
+are not used).
+
+Community Cloud clears the container disk when an app sleeps or redeploys, so the
+first visit after a wake-up refetches regardless of the schedule above.
 
 ### Environment
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SLEEPER_DASH_FP` | on | Set to `0` to disable the FantasyPros layer. Do that **only** if the app is ever made public — serving their rankings to anyone with the link is redistribution. Off, everything falls back to Sleeper projections. |
+| `SLEEPER_DASH_FP` | on | Set to `0` to disable the FantasyPros layer entirely; everything falls back to Sleeper projections. |
 | `SLEEPER_DATA_DIR` | platform cache dir | Where the player file and rankings cache are written. |
-
-A cold container pays about 45 seconds on first load per scoring format: five
-FantasyPros requests spaced by the 5 second crawl delay their robots.txt asks
-for. It is cached on disk for 3 hours after that, and Community Cloud clears the
-disk when the app sleeps or redeploys, so the first visitor after a wake-up
-waits.
 
 ## Files
 
