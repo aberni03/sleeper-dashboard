@@ -138,9 +138,13 @@ div[data-baseweb="tab-border"]{display:none!important;}
 .hdrctl div[data-testid="stTextInput"]{margin-bottom:0!important;}
 .hdrctl button{background:transparent!important;border:1px solid var(--line)!important;
   border-radius:5px!important;color:#9fb0d0!important;font-size:12px!important;
-  font-weight:700!important;height:34px!important;min-height:34px!important;padding:0 12px!important;}
+  font-weight:700!important;height:34px!important;min-height:34px!important;
+  padding:0 8px!important;white-space:nowrap!important;overflow:visible!important;
+  display:flex!important;align-items:center!important;justify-content:center!important;}
 .hdrctl button:hover{border-color:var(--grn)!important;color:var(--grn)!important;}
-.hdrctl button p{font-size:12px!important;font-weight:700!important;}
+.hdrctl button p{font-size:12px!important;font-weight:700!important;
+  white-space:nowrap!important;overflow:visible!important;text-overflow:clip!important;
+  margin:0!important;line-height:1!important;}
 /* matchup ticker — the track holds two copies of the same items, so translating
    it exactly half its width loops seamlessly with no visible jump */
 .ticker{position:relative;overflow:hidden;border-top:1px solid var(--line);
@@ -348,7 +352,7 @@ ticker_slot = st.container()
 
 # Masthead and the controls share one row, so nothing below is pushed down by a
 # full-width input that only needs a corner of the header.
-h1, h2, h3 = st.columns([7, 2.1, 1.1], vertical_alignment="center")
+h1, h2, h3 = st.columns([7, 2.1, 1.45], vertical_alignment="center")
 with h1:
     st.markdown(
         '<div class="mast"><h1>🏈 Fantasy <span class="ac">Command Center</span>'
