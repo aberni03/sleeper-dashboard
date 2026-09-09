@@ -575,11 +575,17 @@ def trade_edge(idea):
     fairness asks whether a deal is even, fit asks whether they'll say yes. A
     rival thin at the position you're sending will tolerate a worse price.
     """
+    # A pick counts at full value in my_net because nothing replaces it, which
+    # let pick returns crowd out real players in the neutral ranking. Charge a
+    # modest amount for anything that cannot take the field; the tanking view is
+    # where picks are supposed to win.
+    picks_in = sum(1 for r in idea.get("gets", []) if r.get("pos") == "PICK")
     return round(
         idea["my_net"]
         + max(0.0, idea.get("pts_delta", 0.0)) * 1.5
         + max(0.0, idea.get("lineup_delta", 0.0)) * 0.5
-        + idea.get("partner_fit", 0.0) * 12.0, 2)
+        + idea.get("partner_fit", 0.0) * 12.0
+        - picks_in * 9.0, 2)
 
 
 def _surplus_over_replacement(rows, repl):
@@ -1260,6 +1266,9 @@ def block_ideas(ctx, valuer, players, give_ids, want=None, max_ideas=10,
                 "their_pts_delta": round(
                     _lineup_points(their_after, ctx, valuer, players)
                     - _lineup_points(their_pids, ctx, valuer, players), 1),
+                "ros_delta": _ros_delta(my_pids, after, ctx, players, weekly_maps),
+                "their_ros_delta": _ros_delta(their_pids, their_after, ctx,
+                                              players, weekly_maps),
                 "fairness": round(100 - abs(g_cmp - t_cmp) / max(g_cmp, t_cmp) * 100, 0),
                 "package_adj": round(ag + at),
                 "my_pos_out": gives[0]["pos"], "my_pos_in": gets[0]["pos"],
@@ -1296,38 +1305,34 @@ def block_ideas(ctx, valuer, players, give_ids, want=None, max_ideas=10,
     return found[:max_ideas]
 
 
-def block_edge(idea, stance="Competing"):
-    """Rank a shopping-list idea by what the roster is actually trying to do.
+def block_edge(idea, stance="Top ideas"):
+    """Rank a shopping-list idea by what the roster is trying to do.
 
-    Competing is the normal edge. Tanking drops the win-now terms and ranks on
-    long-term value and picks acquired instead — and treats a drop in this
-    season's points as mildly good, because a worse record is a better pick.
+    Top ideas is the neutral ranking — the same edge used everywhere else.
+
+    Competing is this season and nothing else. Rest-of-season points lead, and a
+    pick coming back is a penalty rather than a bonus: it cannot start for you in
+    November, which is the whole reason a contender trades one away.
+
+    Tanking is the mirror. Long-term value and picks acquired lead, and a lineup
+    that scores less is mildly good, because a worse record is a better pick.
     """
-    if stance != "Tanking":
-        return trade_edge(idea)
     picks_in = sum(1 for r in idea.get("gets", []) if r.get("pos") == "PICK")
-    return round(idea["my_net"]
-                 + max(0.0, idea.get("lineup_delta", 0.0)) * 0.5
-                 + picks_in * 8.0
-                 - min(0.0, idea.get("ros_delta") or 0.0) * 0.02
-                 + idea.get("partner_fit", 0.0) * 12.0, 2)
-
-
-# ── weekly digest # ── weekly digest (the headline output) ───────────────────────────────────────
-def weekly_digest(ctx, valuer, players, trend_add):
-    """One compact recommendation set per league: lineup / waivers / trades."""
-    ss = start_sit(ctx, valuer, players)
-    wv = waiver_targets(ctx, valuer, players, trend_add, limit=5)
-    tr = trade_ideas(ctx, valuer, players, max_ideas=3)
-    lineup_moves = []
-    if ss:
-        for sw in ss["swaps"]:
-            alt = "".join(f" or {a['name']}" for a in sw["alts"])
-            lineup_moves.append(f"{sw['slot']}: start {sw['in']['name']}{alt} over {sw['out']['name']}")
-    return {
-        "name": ctx["name"], "format": ctx["format"],
-        "lineup_moves": lineup_moves,
-        "waivers": [f"{w['name']} ({w['pos']})" for w in wv[:3]],
-        "trades": [f"{t['give']['name']} → {t['get']['name']} w/ {t['partner']}" for t in tr],
-        "start_sit": ss, "waiver_rows": wv, "trade_rows": tr,
-    }
+    fit = idea.get("partner_fit", 0.0) * 12.0
+    if stance == "Tanking":
+        return round(idea["my_net"]
+                     + max(0.0, idea.get("lineup_delta", 0.0)) * 0.5
+                     + picks_in * 8.0
+                     - min(0.0, idea.get("ros_delta") or 0.0) * 0.02
+                     + fit, 2)
+    if stance == "Competing":
+        # Deliberately excludes my_net. Value over replacement counts a pick at
+        # full value because nothing replaces it, which made picks outrank real
+        # players even here — the opposite of what a contender wants. This season
+        # only: points now, points over the remaining weeks, and a flat penalty
+        # for anything that cannot take the field.
+        return round(max(0.0, idea.get("ros_delta") or 0.0) * 0.5
+                     + max(0.0, idea.get("pts_delta", 0.0)) * 2.0
+                     - picks_in * 40.0
+                     + fit, 2)
+    return trade_edge(idea)

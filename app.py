@@ -1340,12 +1340,12 @@ def render_trade_block():
                         key="blk_want", label_visibility="collapsed") or "Anything"
 
     # Dynasty only: whether a worse lineup this year is a cost or the point.
-    stance = "Competing"
+    stance = "Top ideas"
     if ctx["format"] == "dynasty":
-        st.markdown('<div class="pickerlbl">Where your season stands</div>',
-                    unsafe_allow_html=True)
-        stance = st.pills("Stance", ["Competing", "Tanking"], default="Competing",
-                          key="blk_stance", label_visibility="collapsed") or "Competing"
+        st.markdown('<div class="pickerlbl">Rank for</div>', unsafe_allow_html=True)
+        stance = st.pills("Rank for", ["Top ideas", "Competing", "Tanking"],
+                          default="Top ideas", key="blk_stance",
+                          label_visibility="collapsed") or "Top ideas"
 
     st.markdown('<div class="pickerlbl">Who you are shopping</div>',
                 unsafe_allow_html=True)
@@ -1355,10 +1355,9 @@ def render_trade_block():
                           key="blk_give", label_visibility="collapsed",
                           max_selections=2)
     if not give:
-        extra = ('<b>Where your season stands</b> decides whether a deal that '
-                 'weakens this year counts against it or for it — tanking ranks '
-                 'long-term value and picks, and a worse record means a better '
-                 'pick. ' if ctx["format"] == "dynasty" else "")
+        extra = ('<b>Rank for</b> reorders the same set of ideas: competing puts '
+                 'this season first and treats an incoming pick as a cost, '
+                 'tanking does the reverse. ' if ctx["format"] == "dynasty" else "")
         st.markdown('<div class="note">Choose a player to shop — two at most, since '
                     'anything larger stops being a trade anyone reads. '
                     '<b>What you want back</b> narrows the return to one position, '
@@ -1404,7 +1403,8 @@ def render_trade_block():
 
     hdr(f'{len(ideas)} ideas for {shopping}'
         + (f" · want {want}" if want != "Anything" else "")
-        + (f" · {stance.lower()}" if ctx["format"] == "dynasty" else ""))
+        + (f" · ranked for {stance.lower()}"
+           if ctx["format"] == "dynasty" and stance != "Top ideas" else ""))
     for t in ideas:
         st.markdown(trade_card(t, ctx), unsafe_allow_html=True)
 
