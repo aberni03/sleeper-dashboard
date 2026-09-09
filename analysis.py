@@ -468,7 +468,17 @@ def starting_capacity(roster_positions):
     flex = {}
     for slot in _startable_slots(roster_positions):
         elig = FLEX_ELIG.get(slot, set())
-        if len(elig) > 1:
+        if len(elig) <= 1:
+            continue
+        if "QB" in elig:
+            # Superflex. Nominally contested, in practice never: a quarterback
+            # outscores every flex alternative, so that seat is a second starting
+            # quarterback and counts as one. The other positions it nominally
+            # accepts stay contested, because they are.
+            ded["QB"] = ded.get("QB", 0) + 1
+            for pos in elig - {"QB"}:
+                flex[pos] = min(flex.get(pos, 0) + 1, 1)
+        else:
             for pos in elig:
                 flex[pos] = min(flex.get(pos, 0) + 1, 1)      # at most one
     return ded, flex
