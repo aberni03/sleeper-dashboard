@@ -1231,6 +1231,7 @@ def block_ideas(ctx, valuer, players, give_ids, want=None, max_ideas=10,
     base_val = _lineup_value(my_pids, ctx, valuer, players)
     base_pts = _lineup_points(my_pids, ctx, valuer, players)
     dedicated = _dedicated_slots(ctx["roster_positions"])
+    ded, _flex = starting_capacity(ctx["roster_positions"])
 
     gives = []
     for pid in give_ids:
@@ -1270,10 +1271,39 @@ def block_ideas(ctx, valuer, players, give_ids, want=None, max_ideas=10,
             continue
         pool.sort(key=lambda r: -r["raw"])
 
+        # Filler: everything else that team could add to square a deal. Asking
+        # for a tight end and getting two back matches on value but not on how
+        # anyone plays — you start one. When the position has a single starting
+        # slot, the return carries one of them and the balance comes from another
+        # position or a pick.
+        filler = []
+        if want and want not in ("Anything", "Picks"):
+            for pid in their_pids:
+                pi = pinfo(pid, players)
+                if pi["pos"] == want:
+                    continue
+                raw = valuer.raw_value(pid)
+                if raw:
+                    filler.append({**pi, "val": valuer.value(pid), "raw": raw})
+            if dynasty and picks_by_team:
+                filler += picks_by_team.get(rid, [])
+            filler.sort(key=lambda r: -r["raw"])
+        one_only = want not in (None, "Anything", "Picks") and ded.get(want, 0) <= 1
+
         combos = [[r] for r in pool]
-        for i in range(min(len(pool), 8)):
-            for j in range(i + 1, min(len(pool), 8)):
-                combos.append([pool[i], pool[j]])
+        if one_only:
+            for r in pool[:6]:
+                for f in filler[:8]:
+                    # the position you asked for has to be the piece, not the
+                    # throw-in: a tight end plus a better quarterback is a
+                    # quarterback trade wearing a disguise
+                    if f["raw"] >= r["raw"]:
+                        continue
+                    combos.append([r, f])
+        else:
+            for i in range(min(len(pool), 8)):
+                for j in range(i + 1, min(len(pool), 8)):
+                    combos.append([pool[i], pool[j]])
 
         best_for_team = []
         for gets in combos:
