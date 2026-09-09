@@ -1144,7 +1144,7 @@ def render_trade_ideas_global():
         for t in ranked[:TOP_PER_LEAGUE]:
             tr = v.trend30(t["get"]["id"]) if hasattr(v, "trend30") else 0
             trend = (f'<div class="why" style="margin-top:6px">30-day trend on '
-                     f'{esc(t["gets"][0]["name"] if t.get("gets") else t["get"]["name"])}:
+                     f'{esc(t["gets"][0]["name"] if t.get("gets") else t["get"]["name"])}: '
                      f'<span class="trend {"up" if tr > 0 else "dn"}">'
                      f'{"▲" if tr > 0 else "▼"} {abs(tr):,}</span></div>') if tr else ""
             st.markdown(trade_card(t, ctx, trend), unsafe_allow_html=True)
