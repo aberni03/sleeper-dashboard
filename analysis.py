@@ -533,6 +533,18 @@ def lineup_points_over_weeks(pids, ctx, players, weekly_maps):
     return total
 
 
+
+def _ros_delta(before, after, ctx, players, weekly_maps):
+    """Rest-of-season points change, net of whoever replaces the outgoing player.
+
+    Uses the per-week maps rather than a season total, so a starter on his bye
+    does not hold his slot while his replacement scores nothing.
+    """
+    if not weekly_maps:
+        return None
+    return round(lineup_points_over_weeks(after, ctx, players, weekly_maps)
+                 - lineup_points_over_weeks(before, ctx, players, weekly_maps), 1)
+
 def _lineup_points(pids, ctx, valuer, players):
     """Projected points of the best startable lineup — the weekly-score view of a
     trade, alongside the asset-value view in _lineup_value()."""
@@ -616,7 +628,8 @@ TRADE_SHAPES = {(1, 1), (2, 1), (2, 2)}      # (players out, players in)
 MAX_PER_PARTNER = 2                          # one rival shouldn't fill the board
 
 
-def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
+def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20,
+                weekly_maps=None):
     """At least one idea for every league that allows trading.
 
     The strict pass demands a lot: a partner rich exactly where you're thin and
@@ -643,10 +656,12 @@ def trade_ideas(ctx, valuer, players, max_ideas=6, tolerance=0.20):
     ]
     found = []
     for kw in passes:
-        found = _trade_search(ctx, valuer, players, max_ideas * 3, **kw)
+        found = _trade_search(ctx, valuer, players, max_ideas * 3,
+                              weekly_maps=weekly_maps, **kw)
         if found:
             break
-    return _diversify(found + _pick_ideas(ctx, valuer, players), max_ideas)
+    return _diversify(found + _pick_ideas(ctx, valuer, players,
+                                          weekly_maps=weekly_maps), max_ideas)
 
 
 def _diversify(ideas, max_ideas):
@@ -680,7 +695,7 @@ def _diversify(ideas, max_ideas):
 
 
 def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
-                  mirror=True, need_mult=1.0, sur_mult=1.0):
+                  mirror=True, need_mult=1.0, sur_mult=1.0, weekly_maps=None):
     """One pass of the trade search. See trade_ideas() for how passes escalate.
 
     Shapes are deliberately limited to TRADE_SHAPES — 1-for-1, 2-for-1
@@ -906,6 +921,9 @@ def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
                         "partner_fit": round(fit, 2),
                         "lineup_delta": lineup_delta, "their_lineup_delta": their_delta,
                         "pts_delta": pts_delta, "their_pts_delta": their_pts_delta,
+                        "ros_delta": _ros_delta(my_pids, after, ctx, players, weekly_maps),
+                        "their_ros_delta": _ros_delta(their_pids, their_after, ctx,
+                                                      players, weekly_maps),
                         "lineup_delta_raw": lineup_delta_raw,
                         "their_lineup_delta_raw": their_raw_delta,
                         "lineup_pct": lineup_pct, "their_lineup_pct": their_lineup_pct,
@@ -961,7 +979,8 @@ def _fit_for(ctx, valuer, players, rid, gives):
     return round(fit, 2)
 
 
-def _pick_ideas(ctx, valuer, players, max_ideas=3, tolerance=0.30, ros=None):
+def _pick_ideas(ctx, valuer, players, max_ideas=3, tolerance=0.30, ros=None,
+                weekly_maps=None):
     """Trade draft capital, in whichever direction this roster should be moving.
 
     Projected finish decides the side you're on, because that is what a pick is
@@ -1095,6 +1114,13 @@ def _pick_ideas(ctx, valuer, players, max_ideas=3, tolerance=0.30, ros=None):
                 "lineup_delta": round(_lineup_value(after, ctx, valuer, players) - base_val, 1),
                 "their_lineup_delta": 0.0,
                 "pts_delta": round(_lineup_points(after, ctx, valuer, players) - base_pts, 1),
+                "ros_delta": _ros_delta(my_pids, after, ctx, players, weekly_maps),
+                "their_ros_delta": _ros_delta(
+                    [str(x) for x in tm["players"]],
+                    [str(x) for x in tm["players"]
+                     if str(x) not in {r["id"] for r in best}]
+                    + [r["id"] for r in gives if not r["id"].startswith("PICK|")],
+                    ctx, players, weekly_maps),
                 "my_pos_out": gives[0]["pos"], "my_pos_in": best[0]["pos"],
                 "partner_fit": _fit_for(ctx, valuer, players, rid, gives),
                 "fairness": round(100 - abs(g_raw - t_raw) / max(g_raw, t_raw) * 100, 0),
@@ -1115,7 +1141,8 @@ def _pick_ideas(ctx, valuer, players, max_ideas=3, tolerance=0.30, ros=None):
 
 
 def block_ideas(ctx, valuer, players, give_ids, want=None, max_ideas=10,
-                tolerance=0.25, picks_by_team=None):
+                tolerance=0.25, picks_by_team=None, weekly_maps=None,
+                stance='Competing'):
     """Trade ideas built around players YOU name, not ones the engine picks.
 
     The main search decides both sides; here the outgoing piece is fixed and the
@@ -1123,6 +1150,14 @@ def block_ideas(ctx, valuer, players, give_ids, want=None, max_ideas=10,
     a candidate, and the screen is fairness plus whether the deal helps them,
     rather than a positional mirror. `want` narrows the return to one position or
     to picks when you know what you're shopping for.
+
+    `stance` changes what counts as a good return. Competing ranks on this
+    season: points now and over the remaining weeks. Tanking inverts that — a
+    rebuilding roster wants long-term value and draft capital, and a lineup that
+    scores less this year is a feature, because the pick improves with the losses.
+
+    The band widens in steps if nothing clears, so naming a player and a target
+    rarely comes back empty when a defensible deal exists.
     """
     if ctx["trades_disabled"] or not ctx["my_roster"] or not give_ids:
         return []
@@ -1146,8 +1181,9 @@ def block_ideas(ctx, valuer, players, give_ids, want=None, max_ideas=10,
     after_base = [x for x in my_pids if x not in out_ids]
     dynasty = ctx["format"] == "dynasty"
 
-    ideas = []
-    for tm in ctx["teams"]:
+    def scan(tol):
+      ideas = []
+      for tm in ctx["teams"]:
         rid = tm["roster_id"]
         if rid == my_rid:
             continue
@@ -1185,18 +1221,31 @@ def block_ideas(ctx, valuer, players, give_ids, want=None, max_ideas=10,
             g_cmp, t_cmp = g_raw + ag, t_raw + at
             if not max(g_cmp, t_cmp):
                 continue
-            if abs(g_cmp - t_cmp) / max(g_cmp, t_cmp) > tolerance:
+            if abs(g_cmp - t_cmp) / max(g_cmp, t_cmp) > tol:
                 continue
             my_net = (_surplus_over_replacement(gets, my_repl)
                       - _surplus_over_replacement(gives, my_repl))
             their_net = (_surplus_over_replacement(gives, their_repl)
                          - _surplus_over_replacement(gets, their_repl))
-            if my_net <= 0 or their_net <= 0:
-                continue
             real_in = [r["id"] for r in gets if not r["id"].startswith("PICK|")]
             after = after_base + real_in
-            their_after = ([x for x in their_pids if x not in {r["id"] for r in gets}]
+            their_after = ([x for x in their_pids
+                            if x not in {r["id"] for r in gets}]
                            + [r["id"] for r in gives])
+            their_lu = round(_lineup_value(their_after, ctx, valuer, players)
+                             - their_base, 1)
+
+            # Value over replacement cannot judge a side that is giving picks: a
+            # pick counts at full value because nothing replaces it, while the
+            # player coming back only counts above their own replacement. On any
+            # fair pick-for-player deal that arithmetic is negative no matter how
+            # much the trade helps them, which is why shopping a player for picks
+            # returned nothing at all. Picks do not play, so judge that side on
+            # whether their startable lineup actually improves.
+            picks_moving = any(r["pos"] == "PICK" for r in gets + gives)
+            good_for_them = their_lu > 0 if picks_moving else their_net > 0
+            if my_net <= 0 or not good_for_them:
+                continue
             fit = _fit_for(ctx, valuer, players, rid, gives)
             best_for_team.append({
                 "partner": tm["name"], "partner_rid": rid,
@@ -1206,8 +1255,7 @@ def block_ideas(ctx, valuer, players, give_ids, want=None, max_ideas=10,
                 "my_net": round(my_net, 1), "their_net": round(their_net, 1),
                 "partner_fit": fit,
                 "lineup_delta": round(_lineup_value(after, ctx, valuer, players) - base_val, 1),
-                "their_lineup_delta": round(
-                    _lineup_value(their_after, ctx, valuer, players) - their_base, 1),
+                "their_lineup_delta": their_lu,
                 "pts_delta": round(_lineup_points(after, ctx, valuer, players) - base_pts, 1),
                 "their_pts_delta": round(
                     _lineup_points(their_after, ctx, valuer, players)
@@ -1223,7 +1271,7 @@ def block_ideas(ctx, valuer, players, give_ids, want=None, max_ideas=10,
         # At most two from any one rival, and never two routes to the same
         # player: "Lamar Jackson" and "Lamar Jackson plus a throw-in" score
         # identically and read as one idea.
-        best_for_team.sort(key=lambda x: trade_edge(x), reverse=True)
+        best_for_team.sort(key=lambda x: block_edge(x, stance), reverse=True)
         seen_head, kept = set(), []
         for i in best_for_team:
             # key on the NAME, not the id: two teams' 2027 firsts can share a
@@ -1237,9 +1285,32 @@ def block_ideas(ctx, valuer, players, give_ids, want=None, max_ideas=10,
             if len(kept) == 2:
                 break
         ideas += kept
+      return ideas
 
-    ideas.sort(key=lambda x: (trade_edge(x), x["fairness"]), reverse=True)
-    return ideas[:max_ideas]
+    found = []
+    for tol in (tolerance, 0.35, 0.45):
+        found = scan(tol)
+        if found:
+            break
+    found.sort(key=lambda x: (block_edge(x, stance), x["fairness"]), reverse=True)
+    return found[:max_ideas]
+
+
+def block_edge(idea, stance="Competing"):
+    """Rank a shopping-list idea by what the roster is actually trying to do.
+
+    Competing is the normal edge. Tanking drops the win-now terms and ranks on
+    long-term value and picks acquired instead — and treats a drop in this
+    season's points as mildly good, because a worse record is a better pick.
+    """
+    if stance != "Tanking":
+        return trade_edge(idea)
+    picks_in = sum(1 for r in idea.get("gets", []) if r.get("pos") == "PICK")
+    return round(idea["my_net"]
+                 + max(0.0, idea.get("lineup_delta", 0.0)) * 0.5
+                 + picks_in * 8.0
+                 - min(0.0, idea.get("ros_delta") or 0.0) * 0.02
+                 + idea.get("partner_fit", 0.0) * 12.0, 2)
 
 
 # ── weekly digest # ── weekly digest (the headline output) ───────────────────────────────────────

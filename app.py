@@ -105,6 +105,7 @@ div[data-baseweb="tab-border"]{display:none!important;}
 .trade .why{color:#9fb0d0;font-size:12px;margin-top:9px;line-height:1.5;}
 .trade .impact2{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;margin-top:9px;
   padding-top:8px;border-top:1px solid var(--line);font-size:11.5px;font-weight:700;color:#8ea0c4;}
+.trade .impact2.second{border-top:none;padding-top:0;margin-top:3px;}
 .trade .impact2 .vs2{color:#4d5975;font-size:10px;text-transform:uppercase;letter-spacing:.6px;}
 .trade .impact2 .g{color:var(--grn);} .trade .impact2 .r{color:var(--red);}
 /* standings */
@@ -478,6 +479,20 @@ def ros_for(ctx):
     return _ros_cache[key]
 
 
+_maps_cache = {}
+def weekly_maps_for(ctx):
+    """Per-week projection maps for this league's remaining regular season."""
+    w0, w1 = S.fantasy_weeks(ctx["league"], data["week"])
+    key = (w0, w1, ctx["scoring_key"])
+    if key not in _maps_cache:
+        try:
+            _maps_cache[key] = S.weekly_projection_maps(data["season"], w0,
+                                                        ctx["scoring_key"], w1)
+        except Exception:
+            _maps_cache[key] = []
+    return _maps_cache[key]
+
+
 def rankings_for(ctx):
     """Projected finish, grounded in rest-of-season scoring as well as roster
     value and record."""
@@ -496,7 +511,9 @@ def trades_for(ctx, max_ideas=10):
     detail view both read this."""
     lid = ctx["league_id"]
     if lid not in _TRADE_CACHE:
-        _TRADE_CACHE[lid] = A.trade_ideas(ctx, valuer_for(ctx), players, max_ideas=max_ideas)
+        _TRADE_CACHE[lid] = A.trade_ideas(ctx, valuer_for(ctx), players,
+                                          max_ideas=max_ideas,
+                                          weekly_maps=weekly_maps_for(ctx))
     return _TRADE_CACHE[lid]
 
 
@@ -1183,11 +1200,21 @@ def trade_card(t, ctx, extra=""):
         pc = "g" if pts > 0.05 else ("r" if pts < -0.05 else "")
         return f'<span class="{pc}">{pts:+.1f}</span> pts this week'
 
-    tp = t.get("their_pts_delta")
-    impact = (f'<div class="impact2"><span>You {imp(t.get("pts_delta", 0))}</span>'
-              f'<span class="vs2">vs</span>'
-              f'<span>{esc(t["partner"][:16])} {imp(tp)}</span></div>'
-              if tp is not None else "")
+    def ros(x):
+        c = "g" if x > 0.05 else ("r" if x < -0.05 else "")
+        return f'<span class="{c}">{x:+.1f}</span> pts rest of season'
+
+    tp, mr, tr = (t.get("their_pts_delta"), t.get("ros_delta"),
+                  t.get("their_ros_delta"))
+    impact = ""
+    if tp is not None:
+        impact = (f'<div class="impact2"><span>You {imp(t.get("pts_delta", 0))}</span>'
+                  f'<span class="vs2">vs</span>'
+                  f'<span>{esc(t["partner"][:16])} {imp(tp)}</span></div>')
+        if mr is not None and tr is not None:
+            impact += (f'<div class="impact2 second"><span>You {ros(mr)}</span>'
+                       f'<span class="vs2">vs</span>'
+                       f'<span>{esc(t["partner"][:16])} {ros(tr)}</span></div>')
     gives, gets = t.get("gives", [t["give"]]), t.get("gets", [t["get"]])
     shape = f'<span class="lg">{esc(t.get("shape", "1-for-1"))}</span>'
     return (f'<div class="trade"><div class="top">'
@@ -1306,20 +1333,36 @@ def render_trade_block():
     want_opts = ["Anything", "QB", "RB", "WR", "TE"]
     if ctx["format"] == "dynasty" and v.pick_scale():
         want_opts.append("Picks")
-    want = c2.pills("Looking for", want_opts, default="Anything", key="blk_want",
-                    label_visibility="collapsed") or "Anything"
+    with c2:
+        st.markdown('<div class="pickerlbl">What you want back</div>',
+                    unsafe_allow_html=True)
+        want = st.pills("What you want back", want_opts, default="Anything",
+                        key="blk_want", label_visibility="collapsed") or "Anything"
 
-    st.markdown('<div class="pickerlbl">Who is on the block</div>', unsafe_allow_html=True)
+    # Dynasty only: whether a worse lineup this year is a cost or the point.
+    stance = "Competing"
+    if ctx["format"] == "dynasty":
+        st.markdown('<div class="pickerlbl">Where your season stands</div>',
+                    unsafe_allow_html=True)
+        stance = st.pills("Stance", ["Competing", "Tanking"], default="Competing",
+                          key="blk_stance", label_visibility="collapsed") or "Competing"
+
+    st.markdown('<div class="pickerlbl">Who you are shopping</div>',
+                unsafe_allow_html=True)
     give = st.multiselect("On the block", [r["id"] for r in rows],
                           format_func=lambda i: (f'{look[i]["name"]} · {look[i]["pos"]}-'
                                                  f'{look[i]["team"]} · {look[i]["raw"]:,}'),
                           key="blk_give", label_visibility="collapsed",
                           max_selections=2)
     if not give:
-        st.markdown('<div class="note">Pick a player to shop — two at most, since '
+        extra = ('<b>Where your season stands</b> decides whether a deal that '
+                 'weakens this year counts against it or for it — tanking ranks '
+                 'long-term value and picks, and a worse record means a better '
+                 'pick. ' if ctx["format"] == "dynasty" else "")
+        st.markdown('<div class="note">Choose a player to shop — two at most, since '
                     'anything larger stops being a trade anyone reads. '
-                    f'<b>Looking for</b> narrows what comes back.</div>',
-                    unsafe_allow_html=True)
+                    '<b>What you want back</b> narrows the return to one position, '
+                    f'or to draft picks. {extra}</div>', unsafe_allow_html=True)
         return
 
     picks_by_team = None
@@ -1348,7 +1391,8 @@ def render_trade_block():
 
     with st.spinner("Working the phones…"):
         ideas = A.block_ideas(ctx, v, players, give, want=want, max_ideas=10,
-                              picks_by_team=picks_by_team)
+                              picks_by_team=picks_by_team,
+                              weekly_maps=weekly_maps_for(ctx), stance=stance)
 
     shopping = ", ".join(look[i]["name"] for i in give)
     if not ideas:
@@ -1359,7 +1403,8 @@ def render_trade_block():
         return
 
     hdr(f'{len(ideas)} ideas for {shopping}'
-        + (f" · looking for {want}" if want != "Anything" else ""))
+        + (f" · want {want}" if want != "Anything" else "")
+        + (f" · {stance.lower()}" if ctx["format"] == "dynasty" else ""))
     for t in ideas:
         st.markdown(trade_card(t, ctx), unsafe_allow_html=True)
 
