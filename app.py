@@ -926,9 +926,17 @@ def render_action_center():
                 + '</span>')
 
     def trade_item(t):
-        return (f'<span class="ai"><span class="txt">Give <span class="r">{esc(t["give"]["name"])}</span> '
-                f'→ get <b class="g">{esc(t["get"]["name"])}</b></span>'
-                f'<span class="why">vs {esc(t["partner"])} · {t["fairness"]:.0f}% fair</span></span>')
+        # Every piece, not just the headline one. Showing only give[0]/get[0]
+        # rendered a 2-for-1 as a 1-for-1 with a player silently missing, which
+        # made correct suggestions look wrong.
+        give = " + ".join(esc(r["name"]) for r in t.get("gives", [t["give"]]))
+        get = " + ".join(esc(r["name"]) for r in t.get("gets", [t["get"]]))
+        shape = t.get("shape", "1-for-1")
+        tag = f'<span class="sl">{esc(shape)}</span>' if shape != "1-for-1" else ""
+        return (f'<span class="ai"><span class="txt">{tag}Give '
+                f'<span class="r">{give}</span> → get <b class="g">{get}</b></span>'
+                f'<span class="why">vs {esc(t["partner"])} · {t["fairness"]:.0f}% fair</span>'
+                f'</span>')
 
     cols = st.columns(3)
     with cols[0]:
@@ -1136,7 +1144,7 @@ def render_trade_ideas_global():
         for t in ranked[:TOP_PER_LEAGUE]:
             tr = v.trend30(t["get"]["id"]) if hasattr(v, "trend30") else 0
             trend = (f'<div class="why" style="margin-top:6px">30-day trend on '
-                     f'{esc(t["get"]["name"])}: '
+                     f'{esc(t["gets"][0]["name"] if t.get("gets") else t["get"]["name"])}:
                      f'<span class="trend {"up" if tr > 0 else "dn"}">'
                      f'{"▲" if tr > 0 else "▼"} {abs(tr):,}</span></div>') if tr else ""
             st.markdown(trade_card(t, ctx, trend), unsafe_allow_html=True)
