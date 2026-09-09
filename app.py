@@ -179,6 +179,8 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
 .lane .lgh.first{margin-top:2px;}
 .lane .lh2{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.9px;
   color:var(--amb);margin:16px 0 8px;padding-bottom:6px;border-bottom:1px solid #1c2942;}
+.lane .lh2 .sub2{display:block;margin-top:3px;font-size:10px;font-weight:600;
+  letter-spacing:.2px;text-transform:none;color:#5b688a;}
 .ai .keep{color:#dbe4f7;font-weight:700;} .ai .over{color:#8ea0c4;}
 .ai .mg{color:#7e8db0;font-weight:700;font-size:10.5px;}
 .ai .why{color:#7e8db0;font-size:11px;display:block;margin-top:1px;line-height:1.35;}
@@ -955,12 +957,13 @@ def render_action_center():
         return (f'<span class="ai"><span class="txt"><span class="sl">{esc(c["slot"])}</span>'
                 f'<span class="keep">{esc(a["name"])}</span>{ra} '
                 f'<span class="over">over</span> {esc(b["name"])}{rb}</span>'
-                f'<span class="why">margin {c["margin"]:.1f} — close enough that a '
-                f'matchup read could decide it</span></span>')
+                f'<span class="why">margin {c["margin"]:.1f}</span></span>')
 
     close_html = ""
     if close:
-        close_html = ('<div class="lh2">⚖️ Close calls</div>'
+        close_html = ('<div class="lh2">⚖️ Close calls'
+                      '<span class="sub2">tight enough that a matchup read could '
+                      'decide it</span></div>'
                       + lane_body(close, close_item, ""))
 
     cols = st.columns(3)
