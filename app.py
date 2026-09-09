@@ -340,6 +340,12 @@ qp = st.query_params
 if "username_box" not in st.session_state:
     st.session_state["username_box"] = qp.get("u", "aberni3")
 
+# The ticker runs along the very top edge, above the masthead — where a ticker
+# belongs, and it puts live scores first for a tool you reopen all week rather
+# than a title you have already read. Its slot is reserved here and filled once
+# the data is loaded further down.
+ticker_slot = st.container()
+
 # Masthead and the controls share one row, so nothing below is pushed down by a
 # full-width input that only needs a corner of the header.
 h1, h2, h3 = st.columns([7, 2.1, 1.1], vertical_alignment="center")
@@ -1470,7 +1476,8 @@ def render_trade_calc():
 
 
 # ── header stat rail ──────────────────────────────────────────────────────────
-render_ticker()
+with ticker_slot:
+    render_ticker()
 
 # ── top-level board ───────────────────────────────────────────────────────────
 # The guillotine tab only exists for accounts that actually play the format —
