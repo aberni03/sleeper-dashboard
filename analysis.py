@@ -359,28 +359,49 @@ def week_matchups(ctx, valuer, players, rows):
 
 
 # ── projected standings & rookie picks ────────────────────────────────────────
-def power_rankings(ctx, valuer, players):
-    """Project where each team finishes — which is what sets rookie draft order.
+def power_rankings(ctx, valuer, players, ros=None):
+    """Project where each team finishes.
 
-    Blends roster asset value with actual record. In September a 1-0 record says
-    almost nothing and roster strength says almost everything; by November it's
-    the reverse, so the record's weight grows with games played rather than being
-    fixed. Returns rows sorted best -> worst with a proj_rank.
+    Three inputs, because no one of them is enough on its own:
+
+      rest-of-season points  what the roster is actually projected to score from
+                             here, over the startable lineup — the most direct
+                             read on results, and the reason a stacked bench does
+                             not inflate anyone
+      roster asset value     positional depth, which carries injury tolerance and
+                             the long view a single week's projection misses
+      actual record          noise in September and signal in November, so its
+                             weight grows with games played rather than being
+                             fixed
+
+    This is NOT a season simulation: no schedule, no head-to-head, no Monte
+    Carlo. Two teams with identical rosters rank identically even if one drew a
+    far harder slate. Returns rows sorted best -> worst with a proj_rank.
     """
     teams, _ = positional_strength(ctx, valuer, players)
     rows = []
     for t in ctx["teams"]:
         rid = t["roster_id"]
         g = t["wins"] + t["losses"] + t["ties"]
+        pids = [str(p) for p in t["players"]]
+        ros_pts = 0.0
+        if ros:
+            lu, _ = optimal_lineup(pids, ctx["roster_positions"], players,
+                                   lambda x: ros.get(str(x), 0.0))
+            ros_pts = sum(ros.get(str(pid), 0.0) for _, pid in lu if pid)
         rows.append({"rid": rid, "name": t["name"], "is_mine": t["is_mine"],
-                     "strength": teams[rid]["total"], "games": g,
+                     "strength": teams[rid]["total"], "ros": ros_pts, "games": g,
                      "winpct": ((t["wins"] + 0.5 * t["ties"]) / g) if g else 0.5,
-                     "record": f'{t["wins"]}-{t["losses"]}' + (f'-{t["ties"]}' if t["ties"] else "")})
-    top = max((r["strength"] for r in rows), default=0) or 1
+                     "record": f'{t["wins"]}-{t["losses"]}'
+                               + (f'-{t["ties"]}' if t["ties"] else "")})
+    top_str = max((r["strength"] for r in rows), default=0) or 1
+    top_ros = max((r["ros"] for r in rows), default=0) or 1
     played = max((r["games"] for r in rows), default=0)
     w = min(played / 10.0, 0.65)              # record tops out at 65% of the blend
     for r in rows:
-        r["score"] = round((1 - w) * (r["strength"] / top) + w * r["winpct"], 4)
+        roster = ((0.6 * (r["ros"] / top_ros) + 0.4 * (r["strength"] / top_str))
+                  if ros else (r["strength"] / top_str))
+        r["score"] = round((1 - w) * roster + w * r["winpct"], 4)
     rows.sort(key=lambda r: r["score"], reverse=True)
     for i, r in enumerate(rows, 1):
         r["proj_rank"] = i
@@ -924,7 +945,7 @@ def _fit_for(ctx, valuer, players, rid, gives):
     return round(fit, 2)
 
 
-def _pick_ideas(ctx, valuer, players, max_ideas=3, tolerance=0.30):
+def _pick_ideas(ctx, valuer, players, max_ideas=3, tolerance=0.30, ros=None):
     """Trade draft capital, in whichever direction this roster should be moving.
 
     Projected finish decides the side you're on, because that is what a pick is
@@ -943,7 +964,7 @@ def _pick_ideas(ctx, valuer, players, max_ideas=3, tolerance=0.30):
     if not getattr(valuer, "pick_scale", None) or not valuer.pick_scale():
         return []
 
-    pranks, _ = power_rankings(ctx, valuer, players)
+    pranks, _ = power_rankings(ctx, valuer, players, ros=ros)
     n_teams = ctx["num_teams"] or len(pranks)
     rank_of = {r["rid"]: r["proj_rank"] for r in pranks}
     name_of = {t["roster_id"]: t["name"] for t in ctx["teams"]}

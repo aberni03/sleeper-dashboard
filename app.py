@@ -452,6 +452,25 @@ st.markdown(
 def valuer_for(ctx):
     return Valuer(ctx, players, proj, fp=fp_for(ctx))
 
+
+_ros_cache = {}
+def ros_for(ctx):
+    """Rest-of-season projections for this league's remaining regular season."""
+    w0, w1 = S.fantasy_weeks(ctx["league"], data["week"])
+    key = (w0, w1)
+    if key not in _ros_cache:
+        try:
+            _ros_cache[key] = S.ros_projections(data["season"], w0, "ppr", w1)
+        except Exception:
+            _ros_cache[key] = {}
+    return _ros_cache[key]
+
+
+def rankings_for(ctx):
+    """Projected finish, grounded in rest-of-season scoring as well as roster
+    value and record."""
+    return A.power_rankings(ctx, valuer_for(ctx), players, ros=ros_for(ctx))
+
 _DIGEST_CACHE = {}
 def digest_for(ctx):
     lid = ctx["league_id"]
@@ -769,7 +788,7 @@ def render_leagues_overview():
 
     # ── season to date, with projected finish ────────────────────────────────
     with sub[2]:
-        pranks, rec_weight = A.power_rankings(ctx, v, players)
+        pranks, rec_weight = rankings_for(ctx)
         proj_rank = {r["rid"]: r["proj_rank"] for r in pranks}
         hdr("Standings · season to date")
         st.markdown('<div class="thead2"><div>#</div><div>TEAM</div><div>RECORD</div>'
@@ -1149,18 +1168,15 @@ def trade_card(t, ctx, extra=""):
     still worth seeing — it just has to say so rather than be dressed up."""
     kind = "dynasty asset" if ctx["format"] == "dynasty" else "win-now"
 
-    def imp(pts, val):
+    def imp(pts):
         pc = "g" if pts > 0.05 else ("r" if pts < -0.05 else "")
-        vc = "g" if val > 0 else ("r" if val < 0 else "")
-        return (f'<span class="{pc}">{pts:+.1f}</span> pts · '
-                f'<span class="{vc}">{val:+.1f}%</span> lineup')
+        return f'<span class="{pc}">{pts:+.1f}</span> pts this week'
 
-    tp, tv = t.get("their_pts_delta"), t.get("their_lineup_pct")
-    impact = (f'<div class="impact2"><span>You '
-              f'{imp(t.get("pts_delta", 0), t.get("lineup_pct", 0))}'
-              f'</span><span class="vs2">vs</span>'
-              f'<span>{esc(t["partner"][:16])} {imp(tp, tv)}</span></div>'
-              if tp is not None and tv is not None else "")
+    tp = t.get("their_pts_delta")
+    impact = (f'<div class="impact2"><span>You {imp(t.get("pts_delta", 0))}</span>'
+              f'<span class="vs2">vs</span>'
+              f'<span>{esc(t["partner"][:16])} {imp(tp)}</span></div>'
+              if tp is not None else "")
     gives, gets = t.get("gives", [t["give"]]), t.get("gets", [t["get"]])
     shape = f'<span class="lg">{esc(t.get("shape", "1-for-1"))}</span>'
     return (f'<div class="trade"><div class="top">'
@@ -1316,7 +1332,7 @@ def render_trade_calc():
     mine_rows, their_rows = rows_for(me), rows_for(partner)
 
     # ── rookie picks (dynasty only) ──────────────────────────────────────────
-    pranks, rec_weight = A.power_rankings(ctx, v, players)
+    pranks, rec_weight = rankings_for(ctx)
     if ctx["format"] == "dynasty" and v.pick_scale():
         rank_by_rid = {r["rid"]: r["proj_rank"] for r in pranks}
         name_by_rid = {t["roster_id"]: t["name"] for t in ctx["teams"]}
@@ -1480,7 +1496,7 @@ def render_trade_calc():
                         for t in ctx["teams"]]
         alt["my_roster"] = next(t for t in alt["teams"]
                                 if t["roster_id"] == me["roster_id"])
-        pr, _ = A.power_rankings(alt, v, players)
+        pr, _ = A.power_rankings(alt, v, players, ros=ros_for(ctx))
         return {r["rid"]: r["proj_rank"] for r in pr}
 
     before = ranks_with({})
@@ -1533,16 +1549,9 @@ def render_trade_calc():
         f'<div>{cell(d_pts, " pts")}</div><div>{cell(t_pts, " pts")}</div>'
         f'<div class="k">Rest of season (wk {_w0}–{_w1})</div>'
         f'<div>{cell(d_ros, " pts")}</div><div>{cell(t_ros, " pts")}</div>'
-        f'<div class="k">Starting lineup value</div>'
-        f'<div>{cellp(d_pct, d_raw)}</div><div>{cellp(t_pct, t_rawv)}</div>'
         f'<div class="k">Projected finish (of {n_t})</div>'
         f'<div>{move(me["roster_id"])}</div><div>{move(partner["roster_id"])}</div>'
-        f'</div>'
-        f'<span class="sub">Starting lineup value is the trade value of the players '
-        f'each side could actually field, shown as a share of their own lineup — '
-        f'yours is worth {base_raw:,.0f} today. Bench players count nothing, so '
-        f'depth you never play does not move it.</span></div>',
-        unsafe_allow_html=True)
+        f'</div></div>', unsafe_allow_html=True)
 
     if ctx["format"] == "dynasty" and v.pick_scale():
         with st.expander("Projected draft order — what sets each pick's tier"):
