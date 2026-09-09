@@ -624,9 +624,13 @@ def package_adjustment(gives, gets, dynasty):
     c = FC_ADJ["dynasty"] if dynasty else FC_ADJ["redraft"]
     longer = gives if ng > nt else gets
     k = abs(ng - nt)
-    extras = sorted(r.get("raw", 0) for r in longer)[:k]      # the k cheapest
+    # Only PLAYERS cost a roster spot. A draft pick is not a body — taking two
+    # picks back forces nobody to cut anyone until the draft — so charging for
+    # them made a 26% overpay in picks read as 95% fair.
+    bodies = sorted(r.get("raw", 0) for r in longer if r.get("pos") != "PICK")
+    extras = bodies[:k]
     adj = sum(min(vv * c["pct"], c["cap"] + i * c["step"]) for i, vv in enumerate(extras))
-    adj += max(0, (k - 1) * c["flat"])
+    adj += max(0, (len(extras) - 1) * c["flat"])
     return (adj, 0.0) if ng < nt else (0.0, adj)
 
 
@@ -1227,7 +1231,13 @@ def block_ideas(ctx, valuer, players, give_ids, want=None, max_ideas=10,
             g_cmp, t_cmp = g_raw + ag, t_raw + at
             if not max(g_cmp, t_cmp):
                 continue
-            if abs(g_cmp - t_cmp) / max(g_cmp, t_cmp) > tol:
+            gap = abs(g_cmp - t_cmp) / max(g_cmp, t_cmp)
+            # Asymmetric on purpose. Overpaying slightly is how a deal gets
+            # accepted; being handed a 25% surplus is a proposal nobody signs, so
+            # the band is tight in your favour and looser against you.
+            if t_cmp > g_cmp and gap > min(tol, 0.12):
+                continue
+            if gap > tol:
                 continue
             my_net = (_surplus_over_replacement(gets, my_repl)
                       - _surplus_over_replacement(gives, my_repl))
