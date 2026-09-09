@@ -6,6 +6,7 @@ import sleeper as S
 import analysis as A
 import values as VAL
 import fantasypros as FP
+from urllib.parse import quote_plus
 from values import Valuer, ENABLE_EXTERNAL, pinfo, FLEX_ELIG
 
 st.set_page_config(page_title="Fantasy Command Center", page_icon="🏈",
@@ -34,6 +35,8 @@ div[data-testid="stDecoration"]{display:none!important;}
 [data-testid="stMainBlockContainer"],.block-container{
   padding-top:.45rem!important;padding-bottom:1.25rem!important;max-width:1200px;}
 .mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}
+.masthome{text-decoration:none!important;color:inherit!important;display:block;cursor:pointer;}
+.masthome:hover .ac{filter:brightness(1.12);}
 .mast{padding:0 2px 0;}
 .mast h1{font-size:26px;font-weight:900;color:#fff;margin:0;letter-spacing:-.6px;
   display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;}
@@ -354,11 +357,19 @@ ticker_slot = st.container()
 # full-width input that only needs a corner of the header.
 h1, h2, h3 = st.columns([7, 2.1, 1.45], vertical_alignment="center")
 with h1:
+    # The title links home. st.tabs keeps its selection client-side and gives
+    # Python no way to change it, but a plain navigation reloads the app and tabs
+    # render fresh on the first one — so this lands on This Week without adding a
+    # button or any other furniture. The username is carried so the reload does
+    # not drop whoever is being viewed.
+    _u = (st.session_state.get("username_box") or "").strip()
+    _home = f"?u={quote_plus(_u)}" if _u else "?"
     st.markdown(
+        f'<a class="masthome" href="{_home}" target="_self">'
         '<div class="mast"><h1>🏈 Fantasy <span class="ac">Command Center</span>'
         '<span class="kicker">Sleeper</span></h1>'
         '<div class="sub">Every lineup, waiver and trade decision across all your '
-        'leagues — one scan.</div></div>', unsafe_allow_html=True)
+        'leagues — one scan.</div></div></a>', unsafe_allow_html=True)
 with h2:
     st.markdown('<div class="hdrctl">', unsafe_allow_html=True)
     username = st.text_input("Sleeper username", key="username_box",
