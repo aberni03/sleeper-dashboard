@@ -103,6 +103,10 @@ div[data-baseweb="tab-border"]{display:none!important;}
 .trade .leg .k.g{color:var(--grn);} .trade .leg .k.r{color:var(--red);}
 .trade .leg .n{color:#fff;font-weight:700;font-size:14px;} .trade .leg .n .m{color:var(--mut);font-size:11px;}
 .trade .why{color:#9fb0d0;font-size:12px;margin-top:9px;line-height:1.5;}
+.trade .impact2{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;margin-top:9px;
+  padding-top:8px;border-top:1px solid var(--line);font-size:11.5px;font-weight:700;color:#8ea0c4;}
+.trade .impact2 .vs2{color:#4d5975;font-size:10px;text-transform:uppercase;letter-spacing:.6px;}
+.trade .impact2 .g{color:var(--grn);} .trade .impact2 .r{color:var(--red);}
 /* standings */
 .srow{display:grid;grid-template-columns:30px 1fr 70px 90px;gap:10px;align-items:center;
   background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:6px;padding:8px 14px;margin-bottom:4px;font-size:13px;}
@@ -1141,7 +1145,21 @@ def trade_leg(rows, kind):
 
 
 def trade_card(t, ctx, extra=""):
+    """A card states who it helps and by how much. A deal favouring one side is
+    still worth seeing — it just has to say so rather than be dressed up."""
     kind = "dynasty asset" if ctx["format"] == "dynasty" else "win-now"
+
+    def imp(pts, val):
+        pc = "g" if pts > 0.05 else ("r" if pts < -0.05 else "")
+        vc = "g" if val > 0.05 else ("r" if val < -0.05 else "")
+        return (f'<span class="{pc}">{pts:+.1f}</span> pts · '
+                f'<span class="{vc}">{val:+.1f}</span> value')
+
+    tp, tv = t.get("their_pts_delta"), t.get("their_lineup_delta")
+    impact = (f'<div class="impact2"><span>You {imp(t.get("pts_delta", 0), t.get("lineup_delta", 0))}'
+              f'</span><span class="vs2">vs</span>'
+              f'<span>{esc(t["partner"][:16])} {imp(tp, tv)}</span></div>'
+              if tp is not None and tv is not None else "")
     gives, gets = t.get("gives", [t["give"]]), t.get("gets", [t["get"]])
     shape = f'<span class="lg">{esc(t.get("shape", "1-for-1"))}</span>'
     return (f'<div class="trade"><div class="top">'
@@ -1149,7 +1167,7 @@ def trade_card(t, ctx, extra=""):
             f'<span class="w">· {kind} values</span></div>'
             f'<div class="fair">{t["fairness"]:.0f}% fair</div></div>'
             f'<div class="legs">{trade_leg(gives, "give")}{trade_leg(gets, "get")}</div>'
-            f'{extra}<div class="why">{esc(t["rationale"])}</div></div>')
+            f'{impact}{extra}<div class="why">{esc(t["rationale"])}</div></div>')
 
 
 # ── global trade ideas tab: every league's win-win swaps in one board ─────────

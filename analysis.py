@@ -690,6 +690,7 @@ def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
         their_pids = [str(x) for x in
                       next(t for t in ctx["teams"] if t["roster_id"] == rid)["players"]]
         their_base_lineup = _lineup_value(their_pids, ctx, valuer, players)
+        their_base_points = _lineup_points(their_pids, ctx, valuer, players)
         for my_need in needs:
             for my_sur in surplus:
                 if my_need == my_sur:
@@ -803,6 +804,9 @@ def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
                     their_started = {pid for _, pid in their_lu if pid}
                     their_delta = round(
                         sum(valuer.value(pid) for pid in their_started) - their_base_lineup, 1)
+                    their_pts_delta = round(
+                        _lineup_points(their_after, ctx, valuer, players)
+                        - their_base_points, 1)
                     if len(gives) > 1 and not all(r["id"] in their_started for r in gives):
                         continue
                     # same rule for me when I'm the one taking on more bodies
@@ -841,7 +845,7 @@ def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
                         "my_net": round(my_net, 1), "their_net": round(their_net, 1),
                         "partner_fit": round(fit, 2),
                         "lineup_delta": lineup_delta, "their_lineup_delta": their_delta,
-                        "pts_delta": pts_delta,
+                        "pts_delta": pts_delta, "their_pts_delta": their_pts_delta,
                         "my_pos_out": my_sur, "my_pos_in": my_need,
                         "fairness": round(100 - abs(g_cmp - t_cmp) / max(g_cmp, t_cmp) * 100, 0),
                         "package_adj": round((ag if g_raw and t_raw else 0)
