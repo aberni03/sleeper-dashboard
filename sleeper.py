@@ -163,6 +163,28 @@ def traded_picks(league_id):
     return _get(f"{API}/league/{league_id}/traded_picks", default=[]) or []
 
 
+@cache(ttl=6 * 3600)
+def ros_projections(season, from_week, scoring="ppr", last_week=18):
+    """Projected points per player summed over every remaining week.
+
+    One call per week, so it is cached hard: a projection for week 12 barely
+    moves hour to hour, and the weekly number the rest of the app uses has its
+    own short TTL for the live case.
+    """
+    total = {}
+    for wk in range(int(from_week), int(last_week) + 1):
+        for pid, pts in (projections(season, wk, scoring) or {}).items():
+            total[pid] = total.get(pid, 0.0) + (pts or 0.0)
+    return total
+
+
+def fantasy_weeks(league, week):
+    """Remaining fantasy regular-season weeks: through the week before playoffs."""
+    start = ((league.get("settings", {}) or {}).get("playoff_week_start") or 0)
+    last = (start - 1) if start and start > 1 else 17
+    return int(week), int(max(week, last))
+
+
 def league_format(league):
     """Return one of: 'dynasty', 'keeper', 'guillotine', 'redraft'."""
     s = league.get("settings", {}) or {}

@@ -484,6 +484,18 @@ def _replacement(ctx, valuer, players, rid):
     return repl
 
 
+def _lineup_value_raw(pids, ctx, valuer, players):
+    """The same startable lineup, totalled in FantasyCalc's own units.
+
+    _lineup_value() works on the internal 0-100 scale, which is right for the
+    engine and meaningless to read: a "+1.3" next to player chips reading 3,848
+    places nothing. This returns the number in the units already on screen, so a
+    lineup change is directly comparable to the values of the players causing it.
+    """
+    lu, _ = optimal_lineup(pids, ctx["roster_positions"], players, valuer.value)
+    return sum(valuer.raw_value(pid) for _, pid in lu if pid)
+
+
 def _lineup_points(pids, ctx, valuer, players):
     """Projected points of the best startable lineup — the weekly-score view of a
     trade, alongside the asset-value view in _lineup_value()."""
@@ -653,6 +665,7 @@ def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
 
     my_pids = [str(p) for p in mine["players"]]
     my_base_lineup = _lineup_value(my_pids, ctx, valuer, players)
+    my_base_raw = _lineup_value_raw(my_pids, ctx, valuer, players)
     my_base_points = _lineup_points(my_pids, ctx, valuer, players)
     # who actually starts for me — a package should send players who don't
     _my_lu, _ = optimal_lineup(my_pids, ctx["roster_positions"], players, valuer.value)
@@ -787,6 +800,11 @@ def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
                     after = [x for x in my_pids if x not in out_ids] + [r["id"] for r in gets]
                     lineup_delta = round(
                         _lineup_value(after, ctx, valuer, players) - my_base_lineup, 1)
+                    _after_raw = _lineup_value_raw(after, ctx, valuer, players)
+                    lineup_delta_raw = round(_after_raw - my_base_raw)
+                    # as a share of your own starting lineup, which needs no scale
+                    lineup_pct = round(100.0 * (_after_raw - my_base_raw)
+                                       / my_base_raw, 1) if my_base_raw else 0.0
                     # weekly scoring outlook, separate from long-term asset value
                     pts_delta = round(
                         _lineup_points(after, ctx, valuer, players) - my_base_points, 1)
@@ -804,6 +822,11 @@ def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
                     their_started = {pid for _, pid in their_lu if pid}
                     their_delta = round(
                         sum(valuer.value(pid) for pid in their_started) - their_base_lineup, 1)
+                    _their_base_raw = _lineup_value_raw(their_pids, ctx, valuer, players)
+                    _their_after_raw = _lineup_value_raw(their_after, ctx, valuer, players)
+                    their_raw_delta = round(_their_after_raw - _their_base_raw)
+                    their_lineup_pct = round(100.0 * (_their_after_raw - _their_base_raw)
+                                             / _their_base_raw, 1) if _their_base_raw else 0.0
                     their_pts_delta = round(
                         _lineup_points(their_after, ctx, valuer, players)
                         - their_base_points, 1)
@@ -846,6 +869,9 @@ def _trade_search(ctx, valuer, players, max_ideas=6, tolerance=0.20,
                         "partner_fit": round(fit, 2),
                         "lineup_delta": lineup_delta, "their_lineup_delta": their_delta,
                         "pts_delta": pts_delta, "their_pts_delta": their_pts_delta,
+                        "lineup_delta_raw": lineup_delta_raw,
+                        "their_lineup_delta_raw": their_raw_delta,
+                        "lineup_pct": lineup_pct, "their_lineup_pct": their_lineup_pct,
                         "my_pos_out": my_sur, "my_pos_in": my_need,
                         "fairness": round(100 - abs(g_cmp - t_cmp) / max(g_cmp, t_cmp) * 100, 0),
                         "package_adj": round((ag if g_raw and t_raw else 0)

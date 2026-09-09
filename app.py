@@ -1151,12 +1151,13 @@ def trade_card(t, ctx, extra=""):
 
     def imp(pts, val):
         pc = "g" if pts > 0.05 else ("r" if pts < -0.05 else "")
-        vc = "g" if val > 0.05 else ("r" if val < -0.05 else "")
+        vc = "g" if val > 0 else ("r" if val < 0 else "")
         return (f'<span class="{pc}">{pts:+.1f}</span> pts · '
-                f'<span class="{vc}">{val:+.1f}</span> value')
+                f'<span class="{vc}">{val:+.1f}%</span> lineup')
 
-    tp, tv = t.get("their_pts_delta"), t.get("their_lineup_delta")
-    impact = (f'<div class="impact2"><span>You {imp(t.get("pts_delta", 0), t.get("lineup_delta", 0))}'
+    tp, tv = t.get("their_pts_delta"), t.get("their_lineup_pct")
+    impact = (f'<div class="impact2"><span>You '
+              f'{imp(t.get("pts_delta", 0), t.get("lineup_pct", 0))}'
               f'</span><span class="vs2">vs</span>'
               f'<span>{esc(t["partner"][:16])} {imp(tp, tv)}</span></div>'
               if tp is not None and tv is not None else "")
@@ -1448,8 +1449,29 @@ def render_trade_calc():
     def lv(pids):
         return A._lineup_value(pids, ctx, v, players)
 
+    def lvr(pids):                      # same lineup, in FantasyCalc's own units
+        return A._lineup_value_raw(pids, ctx, v, players)
+
     d_pts, t_pts = lp(my_after) - lp(my_pids), lp(their_after) - lp(their_pids)
+
+    # rest of season: the same lineup question asked over every remaining week.
+    # One lineup is chosen on the summed projections rather than re-optimised
+    # week by week — close enough, since the same players start most weeks, and
+    # it keeps this to a single pass instead of one per week per side.
+    _w0, _w1 = S.fantasy_weeks(ctx["league"], data["week"])
+    ros = S.ros_projections(data["season"], _w0, "ppr", _w1)
+
+    def lros(pids):
+        lu, _ = A.optimal_lineup(pids, ctx["roster_positions"], players,
+                                 lambda x: ros.get(str(x), 0.0))
+        return sum(ros.get(str(pid), 0.0) for _, pid in lu if pid)
+
+    d_ros, t_ros = lros(my_after) - lros(my_pids), lros(their_after) - lros(their_pids)
     d_val, t_val = lv(my_after) - lv(my_pids), lv(their_after) - lv(their_pids)
+    base_raw, their_base_raw = lvr(my_pids), lvr(their_pids)
+    d_raw, t_rawv = lvr(my_after) - base_raw, lvr(their_after) - their_base_raw
+    d_pct = (100.0 * d_raw / base_raw) if base_raw else 0.0
+    t_pct = (100.0 * t_rawv / their_base_raw) if their_base_raw else 0.0
 
     # where each team is projected to finish, before and after this deal
     def ranks_with(rosters):
@@ -1498,6 +1520,10 @@ def render_trade_calc():
         c = "g" if x > 0.05 else ("r" if x < -0.05 else "")
         return f'<span class="{c}">{x:+.1f}{unit}</span>'
 
+    def cellp(pct, raw):                # share of that side's own starting lineup
+        c = "g" if raw > 0 else ("r" if raw < 0 else "")
+        return f'<span class="{c}">{pct:+.1f}%</span>'
+
     st.markdown(
         f'<div class="verdict {cls}">{esc(head)}'
         f'<div class="impact">'
@@ -1505,11 +1531,18 @@ def render_trade_calc():
         f'<div class="ih">{esc(partner["name"][:18])}</div>'
         f'<div class="k">Week {data["week"]} lineup</div>'
         f'<div>{cell(d_pts, " pts")}</div><div>{cell(t_pts, " pts")}</div>'
-        f'<div class="k">Startable roster value</div>'
-        f'<div>{cell(d_val)}</div><div>{cell(t_val)}</div>'
+        f'<div class="k">Rest of season (wk {_w0}–{_w1})</div>'
+        f'<div>{cell(d_ros, " pts")}</div><div>{cell(t_ros, " pts")}</div>'
+        f'<div class="k">Starting lineup value</div>'
+        f'<div>{cellp(d_pct, d_raw)}</div><div>{cellp(t_pct, t_rawv)}</div>'
         f'<div class="k">Projected finish (of {n_t})</div>'
         f'<div>{move(me["roster_id"])}</div><div>{move(partner["roster_id"])}</div>'
-        f'</div></div>', unsafe_allow_html=True)
+        f'</div>'
+        f'<span class="sub">Starting lineup value is the trade value of the players '
+        f'each side could actually field, shown as a share of their own lineup — '
+        f'yours is worth {base_raw:,.0f} today. Bench players count nothing, so '
+        f'depth you never play does not move it.</span></div>',
+        unsafe_allow_html=True)
 
     if ctx["format"] == "dynasty" and v.pick_scale():
         with st.expander("Projected draft order — what sets each pick's tier"):
