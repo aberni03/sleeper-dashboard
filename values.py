@@ -190,6 +190,17 @@ class Valuer:
             if ctx["format"] == "dynasty":
                 self._picks = pick_values(ctx["superflex"], nteams, rec)
         self.dynasty = ctx["format"] == "dynasty"
+        # Ceiling for the search-rank proxy. It only applies to players the market
+        # does not price, and it has to sit below the priced distribution: the two
+        # are different scales, and letting them compete put a retired Tom Brady
+        # at 56.6 — above a real Josh Allen — purely because he is still heavily
+        # searched. Bottom-decile of what IS priced, so an unpriced player can
+        # never outrank a priced one.
+        vals = sorted(v["dyn"] if self.dynasty else v["redraft"]
+                      for v in self._ext.values()) if self._ext else []
+        vals = [x for x in vals if x > 0]
+        self._proxy_cap = vals[len(vals) // 10] if vals else 100.0
+
 
     def value(self, pid):
         """Asset value used for trades/roster strength. Dynasty→long-term, redraft→win-now."""
@@ -197,7 +208,13 @@ class Valuer:
             v = self._ext.get(str(pid))
             if v:
                 return v["dyn"] if self.dynasty else v["redraft"]
-        return proxy_value(pid, self.players)          # K/DEF/deep bench, or API down
+            # Unpriced. No NFL team means retired or out of the league — Sleeper
+            # keeps such players flagged active, so the roster alone won't say so.
+            p = self.players.get(str(pid)) or {}
+            if not p.get("team"):
+                return 0.0
+            return min(proxy_value(pid, self.players), self._proxy_cap)
+        return proxy_value(pid, self.players)          # external source off entirely
 
     def pick_value(self, season, rnd, tier):
         """FantasyCalc value for one rookie pick, tier-adjusted.
