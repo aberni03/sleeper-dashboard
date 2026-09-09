@@ -456,9 +456,40 @@ def pick_inventory(ctx, seasons):
 
 
 # ── team strength (for trades) ────────────────────────────────────────────────
+def starting_capacity(roster_positions):
+    """(dedicated slots, flex-contested slots) per position.
+
+    The two are not the same thing and cannot be added. A dedicated slot is a
+    guaranteed start; a flex is contested — the flex spots compete across running
+    back, receiver and tight end, so granting each of them a full extra slot
+    counted the same seat three times.
+    """
+    ded = dict(_dedicated_slots(roster_positions))
+    flex = {}
+    for slot in _startable_slots(roster_positions):
+        elig = FLEX_ELIG.get(slot, set())
+        if len(elig) > 1:
+            for pos in elig:
+                flex[pos] = min(flex.get(pos, 0) + 1, 1)      # at most one
+    return ded, flex
+
+
+DEPTH_DECAY = 0.35          # each body beyond a startable slot
+FLEX_WEIGHT = 0.6           # a flex seat is contested, not guaranteed
+
+
 def positional_strength(ctx, valuer, players):
-    """Per-team value totals by position + starter-quality, plus league averages."""
+    """Per-team value by position, weighted by what the league actually starts.
+
+    Summing the top three flat treats depth as if it plays. At quarterback and
+    tight end in a one-slot league it does not: a team with three middling
+    quarterbacks outranked a team with an elite one, which is backwards. Players
+    within the startable count carry full weight and everyone behind them decays
+    sharply, so the starter dominates where there is only one slot, while running
+    back and receiver still reward the depth a flex can use.
+    """
     core = ["QB", "RB", "WR", "TE"]
+    ded, flex = starting_capacity(ctx["roster_positions"])
     teams = {}
     for t in ctx["teams"]:
         by = {pos: [] for pos in core}
@@ -466,7 +497,20 @@ def positional_strength(ctx, valuer, players):
             pos = pinfo(pid, players)["pos"]
             if pos in by:
                 by[pos].append(valuer.value(pid))
-        strength = {pos: round(sum(sorted(v, reverse=True)[:3]), 1) for pos, v in by.items()}  # top-3 depth
+        strength = {}
+        for pos, vals in by.items():
+            vals.sort(reverse=True)
+            n = max(1, ded.get(pos, 1))          # guaranteed starters
+            f = flex.get(pos, 0)                 # one contested flex seat at most
+            total = 0.0
+            for i, val in enumerate(vals[:n + f + 3]):
+                if i < n:
+                    total += val
+                elif i < n + f:
+                    total += val * FLEX_WEIGHT
+                else:
+                    total += val * (DEPTH_DECAY ** (i - n - f + 1))
+            strength[pos] = round(total, 1)
         teams[t["roster_id"]] = {"name": t["name"], "is_mine": t["is_mine"],
                                  "strength": strength, "total": round(sum(strength.values()), 1)}
     avg = {pos: round(sum(tm["strength"][pos] for tm in teams.values()) / max(len(teams), 1), 1)
