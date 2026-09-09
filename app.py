@@ -327,7 +327,12 @@ def inj_tag(pi):
 
 # ── header + username (multi-user) ────────────────────────────────────────────
 qp = st.query_params
-default_user = qp.get("u", "aberni3")
+# The box owns its own state via a key, seeded once from the URL. Passing
+# value=<query param> instead made Streamlit re-create the widget every time the
+# param changed — typing a name updated the URL, which changed value=, which
+# reset the box, which is why a name sometimes needed entering twice.
+if "username_box" not in st.session_state:
+    st.session_state["username_box"] = qp.get("u", "aberni3")
 
 # Masthead and the controls share one row, so nothing below is pushed down by a
 # full-width input that only needs a corner of the header.
@@ -340,7 +345,7 @@ with h1:
         'leagues — one scan.</div></div>', unsafe_allow_html=True)
 with h2:
     st.markdown('<div class="hdrctl">', unsafe_allow_html=True)
-    username = st.text_input("Sleeper username", value=default_user,
+    username = st.text_input("Sleeper username", key="username_box",
                              label_visibility="collapsed",
                              placeholder="Sleeper username…")
     st.markdown('</div>', unsafe_allow_html=True)
@@ -357,6 +362,7 @@ with h3:
     st.markdown(f'<div class="upd">updated {esc(_upd)}</div></div>',
                 unsafe_allow_html=True)
 
+username = (username or "").strip()          # trailing spaces resolve to no user
 if username and username != qp.get("u"):
     st.query_params["u"] = username
 
