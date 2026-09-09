@@ -27,7 +27,12 @@ CSS = """
 header[data-testid="stHeader"]{display:none!important;height:0!important;}
 div[data-testid="stToolbar"]{display:none!important;}
 div[data-testid="stDecoration"]{display:none!important;}
-.block-container{padding-top:.75rem;padding-bottom:3rem;max-width:1200px;}
+/* Streamlit sizes this container itself and its rule outranks a bare class
+   selector, which is why the top gap survived hiding the header. Target the
+   testid it actually ships. The bottom padding is generous for a scrolling doc
+   and wasteful for a dashboard meant to be read in one screen. */
+[data-testid="stMainBlockContainer"],.block-container{
+  padding-top:.45rem!important;padding-bottom:1.25rem!important;max-width:1200px;}
 .mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}
 .mast{padding:0 2px 0;}
 .mast h1{font-size:26px;font-weight:900;color:#fff;margin:0;letter-spacing:-.6px;
@@ -35,24 +40,24 @@ div[data-testid="stDecoration"]{display:none!important;}
 .mast h1 .ac{background:linear-gradient(90deg,var(--grn),var(--cyan));
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
 .mast h1 .kicker{font-size:11px;font-weight:800;letter-spacing:1.7px;color:var(--mut);text-transform:uppercase;}
-.mast .sub{color:var(--mut);font-size:12.5px;margin-top:3px;}
+.mast .sub{color:var(--mut);font-size:12.5px;margin-top:2px;}
 .statusline{display:flex;flex-wrap:wrap;gap:6px 22px;align-items:center;padding:2px 2px 0;
   font-size:11px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;color:var(--mut);}
 .statusline b{color:#c7d2ea;}
 .statusline .on{color:var(--grn);}
 .note{background:linear-gradient(160deg,#10233f,#0b1526);border:1px solid #26406a;border-radius:11px;
-  padding:9px 14px;margin:2px 0 14px;color:#9fb0d0;font-size:12px;} .note b{color:#c7d2ea;}
+  padding:8px 13px;margin:2px 0 10px;color:#9fb0d0;font-size:12px;} .note b{color:#c7d2ea;}
 .kpi{background:linear-gradient(160deg,var(--card),var(--card2));border:1px solid var(--line);
-  border-radius:16px;padding:14px 18px;margin-bottom:12px;}
+  border-radius:16px;padding:12px 16px;margin-bottom:10px;}
 .kpi .n{font-size:25px;font-weight:900;color:var(--txt);line-height:1;} .kpi .n.g{color:var(--grn);} .kpi .n.c{color:var(--cyan);}
 .kpi .l{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:1px;margin-top:6px;font-weight:600;}
-.daybar{display:flex;align-items:center;gap:10px;margin:18px 0 10px;}
+.daybar{display:flex;align-items:center;gap:10px;margin:13px 0 8px;}
 .daybar span{color:#cdd7ee;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;}
 .daybar .ln{flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent);}
 button[data-baseweb="tab"]{font-size:14px!important;font-weight:800!important;letter-spacing:.6px;text-transform:uppercase;color:#6f7f9e!important;padding:8px 2px!important;}
 button[data-baseweb="tab"]:hover{color:#c7d2ea!important;}
 button[data-baseweb="tab"][aria-selected="true"]{color:#eef3fc!important;}
-div[data-baseweb="tab-list"]{gap:26px!important;border-bottom:1px solid #17233b;margin-bottom:12px;}
+div[data-baseweb="tab-list"]{gap:26px!important;border-bottom:1px solid #17233b;margin-bottom:9px;}
 div[data-baseweb="tab-highlight"]{background:#19e59b!important;height:2.5px!important;}
 div[data-baseweb="tab-border"]{display:none!important;}
 /* league digest card */
@@ -140,7 +145,7 @@ div[data-baseweb="tab-border"]{display:none!important;}
    it exactly half its width loops seamlessly with no visible jump */
 .ticker{position:relative;overflow:hidden;border-top:1px solid var(--line);
   border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0a1224,#070b16);
-  padding:9px 0;margin:0 0 12px;}
+  padding:8px 0;margin:0 0 9px;}
 .ticker:before,.ticker:after{content:'';position:absolute;top:0;bottom:0;width:52px;z-index:2;pointer-events:none;}
 .ticker:before{left:0;background:linear-gradient(90deg,#070b16,transparent);}
 .ticker:after{right:0;background:linear-gradient(270deg,#070b16,transparent);}
@@ -278,7 +283,8 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
    layout above is untouched. The fixed-width grids are what break first: they
    tighten here rather than dropping columns, so no data disappears on a phone. */
 @media (max-width: 680px){
-  .block-container{padding-left:.55rem;padding-right:.55rem;padding-top:.4rem;}
+  [data-testid="stMainBlockContainer"],.block-container{
+    padding-left:.55rem!important;padding-right:.55rem!important;padding-top:.3rem!important;}
   .mast{padding-bottom:6px;}
   .mast h1{font-size:20px;letter-spacing:-.4px;gap:7px;}
   .mast h1 .kicker{font-size:9.5px;letter-spacing:1.2px;}
