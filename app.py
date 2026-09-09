@@ -419,7 +419,18 @@ if not data["contexts"]:
     st.warning(f"**{username}** has no NFL leagues for {data['season']}.")
     st.stop()
 
-proj = S.projections(data["season"], data["week"], "ppr")
+# Projections are per scoring format, and three of these leagues are half PPR.
+# Fetching one PPR map for everything overstated every receiver by three or four
+# points a week, which fed the lineup optimiser, the start/sit calls and both
+# point rows in the trade calculator.
+_proj_cache = {}
+def proj_for(ctx):
+    key = ctx["scoring_key"]
+    if key not in _proj_cache:
+        _proj_cache[key] = S.projections(data["season"], data["week"], key)
+    return _proj_cache[key]
+
+proj = S.projections(data["season"], data["week"], "ppr")   # trending//waiver fallback
 trend = S.trending("add", 168, 250)
 
 # FantasyPros consensus, per scoring format actually in use across the leagues
@@ -450,17 +461,18 @@ st.markdown(
 
 # ── per-league compute (cached objects are cheap; done once per render) ────────
 def valuer_for(ctx):
-    return Valuer(ctx, players, proj, fp=fp_for(ctx))
+    return Valuer(ctx, players, proj_for(ctx), fp=fp_for(ctx))
 
 
 _ros_cache = {}
 def ros_for(ctx):
     """Rest-of-season projections for this league's remaining regular season."""
     w0, w1 = S.fantasy_weeks(ctx["league"], data["week"])
-    key = (w0, w1)
+    key = (w0, w1, ctx["scoring_key"])
     if key not in _ros_cache:
         try:
-            _ros_cache[key] = S.ros_projections(data["season"], w0, "ppr", w1)
+            _ros_cache[key] = S.ros_projections(data["season"], w0,
+                                                ctx["scoring_key"], w1)
         except Exception:
             _ros_cache[key] = {}
     return _ros_cache[key]
@@ -1475,7 +1487,7 @@ def render_trade_calc():
     # on this roster it overstated a trade by 11 points across 14 weeks, because
     # a starter on his bye still held his slot and his replacement scored nothing.
     _w0, _w1 = S.fantasy_weeks(ctx["league"], data["week"])
-    _maps = S.weekly_projection_maps(data["season"], _w0, "ppr", _w1)
+    _maps = S.weekly_projection_maps(data["season"], _w0, ctx["scoring_key"], _w1)
 
     def lros(pids):
         return A.lineup_points_over_weeks(pids, ctx, players, _maps)
