@@ -1453,12 +1453,18 @@ def render_trade_calc():
     adj_g, adj_t = A.package_adjustment(give_rows, get_rows,
                                         ctx["format"] == "dynasty")
     gr_adj, tr_adj = gr + adj_g, tr_ + adj_t
-    diff = tr_adj - gr_adj
-    fairness = (100 - abs(diff) / max(gr_adj, tr_adj) * 100) if max(gr_adj, tr_adj) else 0
+    # Net value stays the plain arithmetic of the two tiles beside it — sending
+    # 4,658 for 3,708 is -950, and showing +556 there because a roster-spot
+    # credit had been folded in made the three tiles contradict each other.
+    # Fairness is where the credit belongs, and the note below explains it.
+    diff = tr_ - gr
+    adj_diff = tr_adj - gr_adj
+    fairness = ((100 - abs(adj_diff) / max(gr_adj, tr_adj) * 100)
+                if max(gr_adj, tr_adj) else 0)
 
     kc = st.columns(4)
-    tiles = [(f"{gr:,}", "You send", "", False), (f"{tr_:,}", "You get", "", False),
-             (f"{diff:+,}", "Net value", "g" if diff >= 0 else "", diff >= 0),
+    tiles = [(f"{gr:,.0f}", "You send", "", False), (f"{tr_:,.0f}", "You get", "", False),
+             (f"{diff:+,.0f}", "Net value", "g" if diff >= 0 else "", diff >= 0),
              (f"{fairness:.0f}%", "Fairness", "g" if fairness >= 85 else "c", False)]
     for col, (n, l, cls, on) in zip(kc, tiles):
         col.markdown(f'<div class="kpi{" on" if on else ""}"><div class="n {cls}">{n}</div>'
