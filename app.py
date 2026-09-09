@@ -1016,9 +1016,8 @@ def render_action_center():
         # made correct suggestions look wrong.
         give = " + ".join(esc(r["name"]) for r in t.get("gives", [t["give"]]))
         get = " + ".join(esc(r["name"]) for r in t.get("gets", [t["get"]]))
-        shape = t.get("shape", "1-for-1")
-        tag = f'<span class="sl">{esc(shape)}</span>' if shape != "1-for-1" else ""
-        return (f'<span class="ai"><span class="txt">{tag}Give '
+        # no shape label: listing both players already says it is a 2-for-1
+        return (f'<span class="ai"><span class="txt">Give '
                 f'<span class="r">{give}</span> → get <b class="g">{get}</b></span>'
                 f'<span class="why">vs {esc(t["partner"])} · {t["fairness"]:.0f}% fair</span>'
                 f'</span>')
@@ -1275,6 +1274,94 @@ def render_trade_ideas_global():
         st.markdown(f'<div class="note" style="margin-top:16px">🔒 Trades disabled in: '
                     f'<b>{esc(", ".join(blocked))}</b> (guillotine/elimination format).</div>',
                     unsafe_allow_html=True)
+
+
+# ── trade block: shop a specific player ──────────────────────────────────────
+def render_trade_block():
+    """Ideas built around a player YOU name. The calculator prices a deal you
+    already have in mind and the Ideas board picks both sides itself; this sits
+    between them — you say who is available and, if you like, what you want back."""
+    tradeable = [c for c in data["contexts"] if not c["trades_disabled"] and c["my_roster"]]
+    if not tradeable:
+        st.markdown('<div class="empty">No leagues with trading enabled.</div>',
+                    unsafe_allow_html=True)
+        return
+    tradeable.sort(key=lambda c: (c["format"] != "dynasty", c["name"]))
+
+    c1, c2 = st.columns([2, 3])
+    lname = c1.selectbox("League", [c["name"] for c in tradeable], key="blk_lg")
+    ctx = next(c for c in tradeable if c["name"] == lname)
+    v = valuer_for(ctx)
+    me = ctx["my_roster"]
+
+    rows = sorted(({**pinfo(p, players), "raw": v.raw_value(p), "val": v.value(p)}
+                   for p in me["players"] if v.raw_value(p)),
+                  key=lambda r: -r["raw"])
+    look = {r["id"]: r for r in rows}
+    if not rows:
+        st.markdown('<div class="empty">Nothing on this roster is priced.</div>',
+                    unsafe_allow_html=True)
+        return
+
+    want_opts = ["Anything", "QB", "RB", "WR", "TE"]
+    if ctx["format"] == "dynasty" and v.pick_scale():
+        want_opts.append("Picks")
+    want = c2.pills("Looking for", want_opts, default="Anything", key="blk_want",
+                    label_visibility="collapsed") or "Anything"
+
+    st.markdown('<div class="pickerlbl">Who is on the block</div>', unsafe_allow_html=True)
+    give = st.multiselect("On the block", [r["id"] for r in rows],
+                          format_func=lambda i: (f'{look[i]["name"]} · {look[i]["pos"]}-'
+                                                 f'{look[i]["team"]} · {look[i]["raw"]:,}'),
+                          key="blk_give", label_visibility="collapsed",
+                          max_selections=2)
+    if not give:
+        st.markdown('<div class="note">Pick a player to shop — two at most, since '
+                    'anything larger stops being a trade anyone reads. '
+                    f'<b>Looking for</b> narrows what comes back.</div>',
+                    unsafe_allow_html=True)
+        return
+
+    picks_by_team = None
+    if ctx["format"] == "dynasty" and v.pick_scale():
+        pranks, _ = rankings_for(ctx)
+        rank_of = {r["rid"]: r["proj_rank"] for r in pranks}
+        name_of = {t["roster_id"]: t["name"] for t in ctx["teams"]}
+        cur = int(ctx.get("season") or data["season"])
+        inv = A.pick_inventory(ctx, [cur + 1, cur + 2, cur + 3])
+        scale = v.pick_scale()
+        picks_by_team = {}
+        for rid, pks in inv.items():
+            out = []
+            for pk in pks:
+                orig = pk["original_rid"]
+                tier = A.pick_tier(rank_of.get(orig, ctx["num_teams"]), ctx["num_teams"])
+                raw = v.pick_value(pk["season"], pk["round"], tier)
+                if not raw:
+                    continue
+                suf = VAL.ROUND_SUFFIX.get(pk["round"], f'{pk["round"]}th')
+                out.append({"id": f'PICK|{pk["season"]}|{pk["round"]}|{orig}',
+                            "name": f'{pk["season"]} {suf} ({tier})', "pos": "PICK",
+                            "team": name_of.get(orig, "?"),
+                            "val": round(raw * scale, 1), "raw": raw})
+            picks_by_team[rid] = out
+
+    with st.spinner("Working the phones…"):
+        ideas = A.block_ideas(ctx, v, players, give, want=want, max_ideas=10,
+                              picks_by_team=picks_by_team)
+
+    shopping = ", ".join(look[i]["name"] for i in give)
+    if not ideas:
+        st.markdown(f'<div class="empty">No fair return for <b>{esc(shopping)}</b>'
+                    + (f' at {esc(want)}' if want != "Anything" else "")
+                    + '. Widen what you are looking for, or add a second piece to '
+                      'the block.</div>', unsafe_allow_html=True)
+        return
+
+    hdr(f'{len(ideas)} ideas for {shopping}'
+        + (f" · looking for {want}" if want != "Anything" else ""))
+    for t in ideas:
+        st.markdown(trade_card(t, ctx), unsafe_allow_html=True)
 
 
 # ── interactive trade calculator ──────────────────────────────────────────────
@@ -1612,7 +1699,7 @@ with ticker_slot:
 # The guillotine tab only exists for accounts that actually play the format —
 # Sleeper flags it structurally as settings.type == 3, so this is not a guess.
 _has_guillotine = any(c["format"] == "guillotine" for c in data["contexts"])
-_labels = ["⚡ This Week", "🏆 Leagues", "📊 Rankings", "🤝 Trades"]
+_labels = ["⚡ This Week", "🏆 Leagues", "📊 This Week's Rankings", "🤝 Trades"]
 if _has_guillotine:
     _labels.append("🪓 Guillotine FAAB Strategy (coming soon)")
 
@@ -1625,11 +1712,13 @@ with top[2]:
     render_rankings()
 with top[3]:
     # both are trade tools: price your own deal, or browse suggestions
-    sub = st.tabs(["🧮 Calculator", "💡 Ideas"])
+    sub = st.tabs(["🧮 Calculator", "💡 Ideas", "📋 Trade Block"])
     with sub[0]:
         render_trade_calc()
     with sub[1]:
         render_trade_ideas_global()
+    with sub[2]:
+        render_trade_block()
 if _has_guillotine:
     with top[4]:
         render_guillotine()

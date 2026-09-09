@@ -1114,6 +1114,134 @@ def _pick_ideas(ctx, valuer, players, max_ideas=3, tolerance=0.30, ros=None):
     return uniq[:max_ideas]
 
 
+def block_ideas(ctx, valuer, players, give_ids, want=None, max_ideas=10,
+                tolerance=0.25, picks_by_team=None):
+    """Trade ideas built around players YOU name, not ones the engine picks.
+
+    The main search decides both sides; here the outgoing piece is fixed and the
+    question is only what comes back. That inverts the filtering: every rival is
+    a candidate, and the screen is fairness plus whether the deal helps them,
+    rather than a positional mirror. `want` narrows the return to one position or
+    to picks when you know what you're shopping for.
+    """
+    if ctx["trades_disabled"] or not ctx["my_roster"] or not give_ids:
+        return []
+    my_rid = ctx["my_roster"]["roster_id"]
+    my_pids = [str(p) for p in ctx["my_roster"]["players"]]
+    my_repl = _replacement(ctx, valuer, players, my_rid)
+    base_val = _lineup_value(my_pids, ctx, valuer, players)
+    base_pts = _lineup_points(my_pids, ctx, valuer, players)
+    dedicated = _dedicated_slots(ctx["roster_positions"])
+
+    gives = []
+    for pid in give_ids:
+        pid = str(pid)
+        gives.append({**pinfo(pid, players), "val": valuer.value(pid),
+                      "raw": valuer.raw_value(pid)})
+    g_raw = sum(r["raw"] for r in gives)
+    if not g_raw:
+        return []
+
+    out_ids = {r["id"] for r in gives}
+    after_base = [x for x in my_pids if x not in out_ids]
+    dynasty = ctx["format"] == "dynasty"
+
+    ideas = []
+    for tm in ctx["teams"]:
+        rid = tm["roster_id"]
+        if rid == my_rid:
+            continue
+        their_pids = [str(x) for x in tm["players"]]
+        their_repl = _replacement(ctx, valuer, players, rid)
+        their_base = _lineup_value(their_pids, ctx, valuer, players)
+
+        pool = []
+        if want != "Picks":
+            for pid in their_pids:
+                pi = pinfo(pid, players)
+                if want and want != "Anything" and pi["pos"] != want:
+                    continue
+                raw = valuer.raw_value(pid)
+                if raw:
+                    pool.append({**pi, "val": valuer.value(pid), "raw": raw})
+        if dynasty and want in (None, "Anything", "Picks") and picks_by_team:
+            pool += picks_by_team.get(rid, [])
+        if not pool:
+            continue
+        pool.sort(key=lambda r: -r["raw"])
+
+        combos = [[r] for r in pool]
+        for i in range(min(len(pool), 8)):
+            for j in range(i + 1, min(len(pool), 8)):
+                combos.append([pool[i], pool[j]])
+
+        best_for_team = []
+        for gets in combos:
+            if (len(gives), len(gets)) not in TRADE_SHAPES and \
+               (len(gets), len(gives)) not in TRADE_SHAPES:
+                continue
+            t_raw = sum(r["raw"] for r in gets)
+            ag, at = package_adjustment(gives, gets, dynasty)
+            g_cmp, t_cmp = g_raw + ag, t_raw + at
+            if not max(g_cmp, t_cmp):
+                continue
+            if abs(g_cmp - t_cmp) / max(g_cmp, t_cmp) > tolerance:
+                continue
+            my_net = (_surplus_over_replacement(gets, my_repl)
+                      - _surplus_over_replacement(gives, my_repl))
+            their_net = (_surplus_over_replacement(gives, their_repl)
+                         - _surplus_over_replacement(gets, their_repl))
+            if my_net <= 0 or their_net <= 0:
+                continue
+            real_in = [r["id"] for r in gets if not r["id"].startswith("PICK|")]
+            after = after_base + real_in
+            their_after = ([x for x in their_pids if x not in {r["id"] for r in gets}]
+                           + [r["id"] for r in gives])
+            fit = _fit_for(ctx, valuer, players, rid, gives)
+            best_for_team.append({
+                "partner": tm["name"], "partner_rid": rid,
+                "shape": f"{len(gives)}-for-{len(gets)}",
+                "gives": gives, "gets": gets, "give": gives[0], "get": gets[0],
+                "give_raw": g_raw, "get_raw": t_raw,
+                "my_net": round(my_net, 1), "their_net": round(their_net, 1),
+                "partner_fit": fit,
+                "lineup_delta": round(_lineup_value(after, ctx, valuer, players) - base_val, 1),
+                "their_lineup_delta": round(
+                    _lineup_value(their_after, ctx, valuer, players) - their_base, 1),
+                "pts_delta": round(_lineup_points(after, ctx, valuer, players) - base_pts, 1),
+                "their_pts_delta": round(
+                    _lineup_points(their_after, ctx, valuer, players)
+                    - _lineup_points(their_pids, ctx, valuer, players), 1),
+                "fairness": round(100 - abs(g_cmp - t_cmp) / max(g_cmp, t_cmp) * 100, 0),
+                "package_adj": round(ag + at),
+                "my_pos_out": gives[0]["pos"], "my_pos_in": gets[0]["pos"],
+                "rationale": (f'{tm["name"]} for '
+                              f'{" + ".join(r["name"] for r in gets)}. '
+                              f'Values within '
+                              f'{abs(g_cmp-t_cmp)/max(g_cmp,t_cmp)*100:.0f}%.'),
+            })
+        # At most two from any one rival, and never two routes to the same
+        # player: "Lamar Jackson" and "Lamar Jackson plus a throw-in" score
+        # identically and read as one idea.
+        best_for_team.sort(key=lambda x: trade_edge(x), reverse=True)
+        seen_head, kept = set(), []
+        for i in best_for_team:
+            # key on the NAME, not the id: two teams' 2027 firsts can share a
+            # tier and render identically, so id-deduping still showed one idea
+            # twice
+            h = i["gets"][0]["name"]
+            if h in seen_head:
+                continue
+            seen_head.add(h)
+            kept.append(i)
+            if len(kept) == 2:
+                break
+        ideas += kept
+
+    ideas.sort(key=lambda x: (trade_edge(x), x["fairness"]), reverse=True)
+    return ideas[:max_ideas]
+
+
 # ── weekly digest # ── weekly digest (the headline output) ───────────────────────────────────────
 def weekly_digest(ctx, valuer, players, trend_add):
     """One compact recommendation set per league: lineup / waivers / trades."""
