@@ -1336,3 +1336,23 @@ def block_edge(idea, stance="Top ideas"):
                      - picks_in * 40.0
                      + fit, 2)
     return trade_edge(idea)
+
+
+# ── weekly digest (the headline output) ───────────────────────────────────────
+def weekly_digest(ctx, valuer, players, trend_add):
+    """One compact recommendation set per league: lineup / waivers / trades."""
+    ss = start_sit(ctx, valuer, players)
+    wv = waiver_targets(ctx, valuer, players, trend_add, limit=5)
+    tr = trade_ideas(ctx, valuer, players, max_ideas=3)
+    lineup_moves = []
+    if ss:
+        for sw in ss["swaps"]:
+            alt = "".join(f" or {a['name']}" for a in sw["alts"])
+            lineup_moves.append(f"{sw['slot']}: start {sw['in']['name']}{alt} over {sw['out']['name']}")
+    return {
+        "name": ctx["name"], "format": ctx["format"],
+        "lineup_moves": lineup_moves,
+        "waivers": [f"{w['name']} ({w['pos']})" for w in wv[:3]],
+        "trades": [f"{t['give']['name']} → {t['get']['name']} w/ {t['partner']}" for t in tr],
+        "start_sit": ss, "waiver_rows": wv, "trade_rows": tr,
+    }
