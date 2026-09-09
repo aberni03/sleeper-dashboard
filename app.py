@@ -280,6 +280,13 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
 .verdict.even{border-color:#2e4470;color:#c7d2ea;}
 .verdict.lose{border-color:var(--red);color:var(--red);background:rgba(255,77,115,.07);}
 .verdict .sub{display:block;font-size:12px;font-weight:600;color:#9fb0d0;margin-top:4px;}
+.verdict .impact{display:grid;grid-template-columns:1fr 108px 108px;gap:5px 10px;
+  margin-top:9px;padding-top:8px;border-top:1px solid var(--line);
+  font-size:12px;font-weight:700;color:#c7d2ea;}
+.verdict .impact .ih{font-size:10px;font-weight:800;text-transform:uppercase;
+  letter-spacing:.7px;color:var(--mut);}
+.verdict .impact .k{color:var(--mut);font-weight:600;}
+.verdict .impact .g{color:var(--grn);} .verdict .impact .r{color:var(--red);}
 /* league tag on a trade card */
 .trade .lg{display:inline-block;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;
   color:#8ea0c4;background:#0e1830;border:1px solid #23345a;border-radius:3px;padding:2px 8px;margin-right:8px;}
@@ -1410,62 +1417,81 @@ def render_trade_calc():
     their_net = (A._surplus_over_replacement(give_rows, their_repl)
                  - A._surplus_over_replacement(get_rows, their_repl))
 
-    # weekly lineup impact on my roster
-    my_pids = [str(x) for x in me["players"]]
     real = lambda ids: [x for x in ids if not str(x).startswith("PICK|")]
-    after = [x for x in my_pids if x not in set(send)] + real(recv)
+    my_pids = [str(x) for x in me["players"]]
+    their_pids = [str(x) for x in partner["players"]]
+    my_after = [x for x in my_pids if x not in set(send)] + real(recv)
+    their_after = [x for x in their_pids if x not in set(recv)] + real(send)
 
     def lp(pids):
         lu, _ = A.optimal_lineup(pids, ctx["roster_positions"], players, v.start_score)
         return sum(v.points(pid) for _, pid in lu if pid)
 
-    d_pts = lp(after) - lp(my_pids)
+    def lv(pids):
+        return A._lineup_value(pids, ctx, v, players)
 
-    if my_net > 0 and their_net > 0:
-        cls, head = "win", "Win-win — both rosters improve over replacement"
-    elif my_net > 0:
-        cls, head = "even", "Good for you — but they have little reason to accept"
-    elif my_net <= 0 and their_net > 0:
-        cls, head = "lose", "You're giving up more than you get"
+    d_pts, t_pts = lp(my_after) - lp(my_pids), lp(their_after) - lp(their_pids)
+    d_val, t_val = lv(my_after) - lv(my_pids), lv(their_after) - lv(their_pids)
+
+    # where each team is projected to finish, before and after this deal
+    def ranks_with(rosters):
+        alt = dict(ctx)
+        alt["teams"] = [{**t, "players": rosters.get(t["roster_id"], t["players"])}
+                        for t in ctx["teams"]]
+        alt["my_roster"] = next(t for t in alt["teams"]
+                                if t["roster_id"] == me["roster_id"])
+        pr, _ = A.power_rankings(alt, v, players)
+        return {r["rid"]: r["proj_rank"] for r in pr}
+
+    before = ranks_with({})
+    after_r = ranks_with({me["roster_id"]: my_after, partner["roster_id"]: their_after})
+    n_t = ctx["num_teams"] or len(ctx["teams"])
+
+    def _ord2(n):
+        return f"{n}{'th' if 11 <= n % 100 <= 13 else {1:'st',2:'nd',3:'rd'}.get(n % 10,'th')}"
+
+    def move(rid):
+        a, b = before.get(rid), after_r.get(rid)
+        if not a or not b:
+            return "—"
+        if a == b:
+            return f'{_ord2(a)} (no change)'
+        arrow = "▲" if b < a else "▼"
+        cls = "g" if b < a else "r"
+        return f'{_ord2(a)} → <span class="{cls}">{_ord2(b)} {arrow}</span>'
+
+    # Judge the headline on what the table actually shows. Value over replacement
+    # alone called deals win-win that gut the other roster's startable lineup —
+    # they receive two players above their own replacement level while losing the
+    # best player in the trade. Nobody accepts that, and claiming otherwise makes
+    # the verdict useless as something to send a leaguemate.
+    if d_val > 0 and t_val > 0:
+        cls, head = "win", "Win-win — both rosters come out ahead"
+    elif d_val > 0 and t_val > -1.0:
+        cls, head = "win", "Good for you, roughly neutral for them"
+    elif d_val > 0:
+        cls, head = "even", "Better for you — they lose roster value, expect pushback"
+    elif t_val > 0 and d_val <= 0:
+        cls, head = "lose", "Better for them than for you"
     else:
         cls, head = "even", "Neither side clearly gains"
+
+    def cell(x, unit=""):
+        c = "g" if x > 0.05 else ("r" if x < -0.05 else "")
+        return f'<span class="{c}">{x:+.1f}{unit}</span>'
+
     st.markdown(
         f'<div class="verdict {cls}">{esc(head)}'
-        f'<span class="sub">Surplus over replacement — asset value on a 0–100 scale, '
-        f'<b>not</b> fantasy points: you {my_net:+.1f} · them {their_net:+.1f}'
-        f'&nbsp;&nbsp;·&nbsp;&nbsp; Week {data["week"]} projected lineup: '
-        f'<b>{d_pts:+.1f} pts</b> (weekly, not season-long)</span></div>',
-        unsafe_allow_html=True)
-
-    # ── balance a lopsided deal with a pick ──────────────────────────────────
-    # You asked the right question: a deal grading 85% still has someone giving
-    # up more, and the smallest pick that closes that gap is often what gets it
-    # accepted. Only suggested when it actually makes the deal FAIRER — a pick
-    # that overshoots past even just tilts it the other way.
-    if fairness < 92 and max(gr, tr_):
-        short_is_me = gr < tr_
-        pool = [r for r in (mine_rows if short_is_me else their_rows)
-                if r["pos"] == "PICK" and r["id"] not in set(send) | set(recv)]
-        gap = abs(gr - tr_)
-        best = None
-        for pk in sorted(pool, key=lambda r: r["raw"]):
-            ng, nt = ((gr + pk["raw"], tr_) if short_is_me else (gr, tr_ + pk["raw"]))
-            new_fair = 100 - abs(ng - nt) / max(ng, nt) * 100
-            if new_fair > fairness:
-                best = (pk, new_fair)
-                break                      # smallest pick that helps
-        if best:
-            pk, new_fair = best
-            who = "you add" if short_is_me else f"{esc(partner['name'])} adds"
-            st.markdown(
-                f'<div class="note">⚖️ <b>Balance it:</b> {who} '
-                f'<b>{esc(pk["name"])}</b> ({pk["raw"]:,}) and this goes from '
-                f'<b>{fairness:.0f}%</b> to <b>{new_fair:.0f}%</b> fair — '
-                f'the gap is {gap:,}.</div>', unsafe_allow_html=True)
-        elif pool:
-            st.markdown(f'<div class="note">⚖️ The gap is {gap:,}; no single pick '
-                        'on the short side closes it without overshooting.</div>',
-                        unsafe_allow_html=True)
+        f'<div class="impact">'
+        f'<div class="ih"></div><div class="ih">You</div>'
+        f'<div class="ih">{esc(partner["name"][:18])}</div>'
+        f'<div class="k">Week {data["week"]} lineup</div>'
+        f'<div>{cell(d_pts, " pts")}</div><div>{cell(t_pts, " pts")}</div>'
+        f'<div class="k">Startable roster value</div>'
+        f'<div>{cell(d_val)}</div><div>{cell(t_val)}</div>'
+        f'<div class="k">Projected finish (of {n_t})</div>'
+        f'<div>{move(me["roster_id"])}</div><div>{move(partner["roster_id"])}</div>'
+        f'</div></div>', unsafe_allow_html=True)
 
     if ctx["format"] == "dynasty" and v.pick_scale():
         with st.expander("Projected draft order — what sets each pick's tier"):
