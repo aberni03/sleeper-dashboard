@@ -517,6 +517,22 @@ def _lineup_value_raw(pids, ctx, valuer, players):
     return sum(valuer.raw_value(pid) for _, pid in lu if pid)
 
 
+def lineup_points_over_weeks(pids, ctx, players, weekly_maps):
+    """Points from re-picking the best lineup EACH week and summing.
+
+    This is what "rest of season" should mean: the answer to a trade is the net
+    of what you gain and what the man replacing your outgoing player scores, week
+    by week. Summing projections first and choosing one lineup gets byes wrong,
+    because a player projected zero that week still occupies his slot.
+    """
+    total = 0.0
+    for wk in weekly_maps:
+        lu, _ = optimal_lineup(pids, ctx["roster_positions"], players,
+                               lambda x: wk.get(str(x), 0.0))
+        total += sum(wk.get(str(pid), 0.0) for _, pid in lu if pid)
+    return total
+
+
 def _lineup_points(pids, ctx, valuer, players):
     """Projected points of the best startable lineup — the weekly-score view of a
     trade, alongside the asset-value view in _lineup_value()."""

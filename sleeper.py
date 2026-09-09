@@ -178,6 +178,19 @@ def ros_projections(season, from_week, scoring="ppr", last_week=18):
     return total
 
 
+@cache(ttl=6 * 3600)
+def weekly_projection_maps(season, from_week, scoring="ppr", last_week=18):
+    """One projection map per remaining week, kept separate.
+
+    ros_projections() sums these, which is fine for ranking a roster but wrong
+    for pricing a trade: a summed total picks one lineup for the whole rest of
+    the season, so a starter on his bye still counts as a starter that week and
+    the man who would actually replace him counts for nothing.
+    """
+    return [projections(season, wk, scoring) or {}
+            for wk in range(int(from_week), int(last_week) + 1)]
+
+
 def fantasy_weeks(league, week):
     """Remaining fantasy regular-season weeks: through the week before playoffs."""
     start = ((league.get("settings", {}) or {}).get("playoff_week_start") or 0)

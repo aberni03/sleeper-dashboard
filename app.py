@@ -1470,17 +1470,15 @@ def render_trade_calc():
 
     d_pts, t_pts = lp(my_after) - lp(my_pids), lp(their_after) - lp(their_pids)
 
-    # rest of season: the same lineup question asked over every remaining week.
-    # One lineup is chosen on the summed projections rather than re-optimised
-    # week by week — close enough, since the same players start most weeks, and
-    # it keeps this to a single pass instead of one per week per side.
+    # Rest of season, re-picking the best lineup EACH week and summing. Choosing
+    # one lineup off summed projections is materially wrong, not just imprecise:
+    # on this roster it overstated a trade by 11 points across 14 weeks, because
+    # a starter on his bye still held his slot and his replacement scored nothing.
     _w0, _w1 = S.fantasy_weeks(ctx["league"], data["week"])
-    ros = S.ros_projections(data["season"], _w0, "ppr", _w1)
+    _maps = S.weekly_projection_maps(data["season"], _w0, "ppr", _w1)
 
     def lros(pids):
-        lu, _ = A.optimal_lineup(pids, ctx["roster_positions"], players,
-                                 lambda x: ros.get(str(x), 0.0))
-        return sum(ros.get(str(pid), 0.0) for _, pid in lu if pid)
+        return A.lineup_points_over_weeks(pids, ctx, players, _maps)
 
     d_ros, t_ros = lros(my_after) - lros(my_pids), lros(their_after) - lros(their_pids)
     d_val, t_val = lv(my_after) - lv(my_pids), lv(their_after) - lv(their_pids)
