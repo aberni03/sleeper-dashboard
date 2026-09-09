@@ -1445,8 +1445,16 @@ def render_trade_calc():
     get_rows = [look[p] for p in recv]
     gr = sum(r["raw"] for r in give_rows)
     tr_ = sum(r["raw"] for r in get_rows)
-    diff = tr_ - gr
-    fairness = (100 - abs(diff) / max(gr, tr_) * 100) if max(gr, tr_) else 0
+
+    # The roster-spot charge for an uneven deal — FantasyCalc's own constants,
+    # already used when generating ideas but previously missing here, so the
+    # calculator was grading packages on a raw sum. It scales with the count
+    # difference, so it covers 3-for-1 and beyond, not just 2-for-1.
+    adj_g, adj_t = A.package_adjustment(give_rows, get_rows,
+                                        ctx["format"] == "dynasty")
+    gr_adj, tr_adj = gr + adj_g, tr_ + adj_t
+    diff = tr_adj - gr_adj
+    fairness = (100 - abs(diff) / max(gr_adj, tr_adj) * 100) if max(gr_adj, tr_adj) else 0
 
     kc = st.columns(4)
     tiles = [(f"{gr:,}", "You send", "", False), (f"{tr_:,}", "You get", "", False),
@@ -1580,10 +1588,14 @@ def render_trade_calc():
                     f'<div class="pf">{esc(tier)}</div></div>', unsafe_allow_html=True)
 
     if len(send) != len(recv) and send and recv:
+        credit = adj_g or adj_t
+        who = "your side" if adj_g else f"{esc(partner['name'])}'s side"
         st.markdown(f'<div class="note">📦 <b>{len(send)}-for-{len(recv)}</b> — the side '
-                    'receiving fewer players needs the best player in the deal, and the side '
-                    'sending more frees a roster spot. Value over replacement above already '
-                    'accounts for the depth you keep.</div>', unsafe_allow_html=True)
+                    'taking on more bodies has to cut someone to fit them, so each extra '
+                    f'body counts for less than face value. <b>{credit:,.0f}</b> is credited '
+                    f'to {who} for that, which is why the fairness above is not a straight '
+                    'sum. FantasyCalc\'s own constants, scaled to the count difference.'
+                    '</div>', unsafe_allow_html=True)
 
 
 # ── header stat rail ──────────────────────────────────────────────────────────
