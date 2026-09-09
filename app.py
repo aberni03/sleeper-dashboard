@@ -177,6 +177,10 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
 .lane .lgh{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.9px;color:#8ea0c4;
   margin:13px 0 7px;padding-bottom:4px;border-bottom:1px dashed #1c2942;}
 .lane .lgh.first{margin-top:2px;}
+.lane .lh2{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.9px;
+  color:var(--amb);margin:16px 0 8px;padding-bottom:6px;border-bottom:1px solid #1c2942;}
+.ai .keep{color:#dbe4f7;font-weight:700;} .ai .over{color:#8ea0c4;}
+.ai .mg{color:#7e8db0;font-weight:700;font-size:10.5px;}
 .ai .why{color:#7e8db0;font-size:11px;display:block;margin-top:1px;line-height:1.35;}
 .ai .alt{color:var(--grn);font-weight:600;}
 .ai .qt{color:#7e8db0;font-weight:700;}
@@ -852,13 +856,15 @@ def render_action_center():
                     label_visibility="collapsed") or "All leagues"
     active = ctxs if pick == "All leagues" else [c for c in ctxs if c["name"] == pick]
 
-    lineup, waivers, trades = {}, {}, {}
+    lineup, waivers, trades, close = {}, {}, {}, {}
     for ctx in active:
         d = digest_for(ctx)
         nm = ctx["name"]
         ss = d["start_sit"]
         if ss and ss["swaps"]:
             lineup[nm] = ss["swaps"]
+        if ss and ss.get("close_calls"):
+            close[nm] = ss["close_calls"][:3]
         w = [x for x in d["waiver_rows"][:3] if x["score"] > 0]
         if w:
             waivers[nm] = w
@@ -874,17 +880,19 @@ def render_action_center():
         f'<span class="counts"><b>{n_l}</b> lineup · <b>{n_w}</b> waivers · '
         f'<b>{n_t}</b> trades</span></div></div>', unsafe_allow_html=True)
 
-    def lane(cls, title, groups, item_fn, empty):
-        """One column. Each league name appears once as a subheader, then its rows."""
+    def lane_body(groups, item_fn, empty):
         if not groups:
-            body = f'<div class="none">{empty}</div>'
-        else:
-            parts = []
-            for i, (nm, items) in enumerate(groups.items()):
-                parts.append(f'<div class="lgh{" first" if i == 0 else ""}">{esc(nm)}</div>')
-                parts.extend(item_fn(x) for x in items)
-            body = "".join(parts)
-        st.markdown(f'<div class="lane"><div class="lh {cls}">{title}</div>{body}</div>',
+            return f'<div class="none">{empty}</div>'
+        parts = []
+        for i, (nm, items) in enumerate(groups.items()):
+            parts.append(f'<div class="lgh{" first" if i == 0 else ""}">{esc(nm)}</div>')
+            parts.extend(item_fn(x) for x in items)
+        return "".join(parts)
+
+    def lane(cls, title, groups, item_fn, empty, extra=""):
+        """One column. Each league name appears once as a subheader, then its rows."""
+        st.markdown(f'<div class="lane"><div class="lh {cls}">{title}</div>'
+                    f'{lane_body(groups, item_fn, empty)}{extra}</div>',
                     unsafe_allow_html=True)
 
     def rank_label(slot, r):
@@ -938,9 +946,27 @@ def render_action_center():
                 f'<span class="why">vs {esc(t["partner"])} · {t["fairness"]:.0f}% fair</span>'
                 f'</span>')
 
+    def close_item(c):
+        """A slot the optimiser got right by a hair. Naming the margin matters:
+        it's the difference between 'settled' and 'flip a coin'."""
+        a, b = c["starter"], c["challenger"]
+        ra = rank_tag(c["slot"], a)
+        rb = rank_tag(c["slot"], b)
+        return (f'<span class="ai"><span class="txt"><span class="sl">{esc(c["slot"])}</span>'
+                f'<span class="keep">{esc(a["name"])}</span>{ra} '
+                f'<span class="over">over</span> {esc(b["name"])}{rb}</span>'
+                f'<span class="why">margin {c["margin"]:.1f} — close enough that a '
+                f'matchup read could decide it</span></span>')
+
+    close_html = ""
+    if close:
+        close_html = ('<div class="lh2">⚖️ Close calls</div>'
+                      + lane_body(close, close_item, ""))
+
     cols = st.columns(3)
     with cols[0]:
-        lane("s", "🟢 Lineup changes", lineup, swap_item, "All lineups optimal 🎉")
+        lane("s", "🟢 Lineup changes", lineup, swap_item, "All lineups optimal 🎉",
+             extra=close_html)
     with cols[1]:
         lane("w", "🔵 Waiver targets", waivers, waiver_item, "No standout adds")
     with cols[2]:

@@ -118,10 +118,36 @@ def start_sit(ctx, valuer, players, alt_tol=1.5):
                       "gain": round(best_pts - valuer.points(out), 1)})
 
     swaps.sort(key=lambda x: (x["rank_delta"] or 0, x["gain"]), reverse=True)
+
+    # Close calls: slots where the lineup is already right, but only just. Worth
+    # surfacing because "no change needed" and "this was nearly a coin flip" are
+    # different answers, and the second one is where a matchup read or late injury
+    # news actually changes your mind.
+    touched = {x["in"]["id"] for x in swaps} | {x["out"]["id"] for x in swaps}
+    close = []
+    for slot, pid in lineup:
+        if not pid or pid in touched:
+            continue
+        elig = FLEX_ELIG.get(slot, set())
+        rivals = [b for b in bench
+                  if b not in touched
+                  and pinfo(b, players)["pos"] in elig
+                  and valuer.start_score(b) > 0]
+        if not rivals:
+            continue
+        best = max(rivals, key=valuer.start_score)
+        held, pushed = valuer.start_score(pid), valuer.start_score(best)
+        band = max(alt_tol, held * 0.08)
+        if 0 <= held - pushed <= band:
+            close.append({"slot": slot,
+                          "starter": row(pid, slot), "challenger": row(best, slot),
+                          "margin": round(held - pushed, 2)})
+    close.sort(key=lambda c: c["margin"])
     return {
         "lineup": lineup_rows,
         "bench": sorted(bench_rows, key=lambda r: r["score"], reverse=True),
         "swaps": swaps,
+        "close_calls": close,
         "start": [x["in"] for x in swaps],     # kept: flat views still read these
         "sit": [x["out"] for x in swaps],
         "proj_total": round(sum(r["pts"] for r in lineup_rows), 1),
