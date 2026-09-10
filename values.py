@@ -317,15 +317,21 @@ class Valuer:
         return 22.0 * math.exp(-ovr / 70.0)
 
     def start_score(self, pid):
-        """Ranking score for lineup decisions.
+        """Ranking score for a lineup decision: this week only.
 
-        Blends Sleeper's projection with the FantasyPros cross-position board, so
-        a player the experts rank far higher can outrank a slightly better
-        projection. Falls back to projections alone when unranked.
+        Sleeper's projection for the week, blended with the FantasyPros
+        consensus. Asset value plays no part — what a player is worth in a trade
+        says nothing about what he scores on Sunday, and letting it in started a
+        ruled-out Brock Bowers ahead of a healthy tight end purely because his
+        dynasty value was high.
+
+        A player with no projection in a week that has them has been ruled out,
+        and scores nothing regardless of where the consensus still ranks him.
         """
         pts = self.points(pid)
-        base = pts if pts > 0 else self.value(pid) / 10.0
+        if self.proj and pts <= 0:
+            return 0.0
         fp = self.fp_points(pid)
         if fp is None or not FP_BLEND:
-            return base
-        return (1 - FP_BLEND) * base + FP_BLEND * fp
+            return pts
+        return (1 - FP_BLEND) * pts + FP_BLEND * fp

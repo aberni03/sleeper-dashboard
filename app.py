@@ -493,6 +493,14 @@ def weekly_maps_for(ctx):
     return _maps_cache[key]
 
 
+def locked_now():
+    """Teams whose week-N game has already started, so their slots are settled."""
+    try:
+        return S.locked_teams(data["season"], data["week"])
+    except Exception:
+        return set()
+
+
 def rankings_for(ctx):
     """Projected finish, grounded in rest-of-season scoring as well as roster
     value and record."""
@@ -502,7 +510,8 @@ _DIGEST_CACHE = {}
 def digest_for(ctx):
     lid = ctx["league_id"]
     if lid not in _DIGEST_CACHE:
-        _DIGEST_CACHE[lid] = A.weekly_digest(ctx, valuer_for(ctx), players, trend)
+        _DIGEST_CACHE[lid] = A.weekly_digest(ctx, valuer_for(ctx), players, trend,
+                                             locked=locked_now())
     return _DIGEST_CACHE[lid]
 
 _TRADE_CACHE = {}
@@ -704,7 +713,7 @@ def render_leagues_overview():
     # ── your lineup, with this week's consensus alongside ────────────────────
     with sub[0]:
         me_ = ctx["my_roster"]
-        ss = A.start_sit(ctx, v, players) if me_ else None
+        ss = A.start_sit(ctx, v, players, locked=locked_now()) if me_ else None
         if not ss:
             st.markdown('<div class="empty">You have no roster in this league.</div>',
                         unsafe_allow_html=True)
@@ -1090,7 +1099,7 @@ def player_row(r, klass, show_slot=True):
             f'<div class="pts">{pts}</div><div class="val">{r["val"]:.0f}</div></div>')
 
 def render_startsit(ctx):
-    ss = A.start_sit(ctx, valuer_for(ctx), players)
+    ss = A.start_sit(ctx, valuer_for(ctx), players, locked=locked_now())
     if not ss:
         st.markdown('<div class="empty">Couldn\'t find your roster in this league.</div>', unsafe_allow_html=True)
         return

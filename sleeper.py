@@ -191,6 +191,31 @@ def weekly_projection_maps(season, from_week, scoring="ppr", last_week=18):
             for wk in range(int(from_week), int(last_week) + 1)]
 
 
+@cache(ttl=600)
+def nfl_schedule(season, season_type="regular"):
+    """Every game for the season, each with a status: pre_game, in_game, complete."""
+    return _get(f"https://api.sleeper.app/schedule/nfl/{season_type}/{season}",
+                default=[]) or []
+
+
+@cache(ttl=600)
+def locked_teams(season, week):
+    """NFL teams whose game this week has already kicked off.
+
+    A lineup decision for a game in progress or finished is not a decision, so
+    these players are excluded from start/sit advice rather than recommended
+    into a slot that has already locked.
+    """
+    out = set()
+    for g in nfl_schedule(season):
+        if g.get("week") != int(week):
+            continue
+        if (g.get("status") or "pre_game") != "pre_game":
+            out.add(g.get("home"))
+            out.add(g.get("away"))
+    return {t for t in out if t}
+
+
 def fantasy_weeks(league, week):
     """Remaining fantasy regular-season weeks: through the week before playoffs."""
     start = ((league.get("settings", {}) or {}).get("playoff_week_start") or 0)

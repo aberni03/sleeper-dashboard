@@ -38,7 +38,7 @@ def optimal_lineup(pids, roster_positions, players, score_fn):
 
 
 # ── start / sit ───────────────────────────────────────────────────────────────
-def start_sit(ctx, valuer, players, alt_tol=1.5):
+def start_sit(ctx, valuer, players, alt_tol=1.5, locked=None):
     """Compare the current starters to the optimal lineup and surface swaps.
 
     Swaps are paired BY SLOT, not by raw score: a bench player is only ever
@@ -52,6 +52,12 @@ def start_sit(ctx, valuer, players, alt_tol=1.5):
     me = ctx["my_roster"]
     if not me:
         return None
+    locked = locked or set()
+
+    def played(pid):
+        """His NFL game has kicked off — the slot is decided either way."""
+        return (pinfo(pid, players).get("team") or "") in locked
+
     pids = me["players"]
     lineup, bench = optimal_lineup(pids, ctx["roster_positions"], players, valuer.start_score)
     optimal_ids = {pid for _, pid in lineup if pid}
@@ -77,6 +83,8 @@ def start_sit(ctx, valuer, players, alt_tol=1.5):
     for i, (slot, pid) in enumerate(lineup):
         if not pid or pid not in incoming:
             continue
+        if played(pid):
+            continue                       # cannot start someone already played
         elig = FLEX_ELIG.get(slot, set())
         # prefer the player literally sitting in this slot today; otherwise the
         # weakest benchable starter who could legally occupy it
@@ -85,8 +93,8 @@ def start_sit(ctx, valuer, players, alt_tol=1.5):
         if out is None:
             legal = [p for p in outgoing if pinfo(p, players)["pos"] in elig]
             out = min(legal, key=valuer.start_score) if legal else None
-        if out is None:
-            continue
+        if out is None or played(out):
+            continue                       # his game is done; benching him is moot
         outgoing.discard(out)
 
         best_pts = valuer.points(pid)
@@ -95,7 +103,7 @@ def start_sit(ctx, valuer, players, alt_tol=1.5):
         if best_score > 0:
             band = max(alt_tol, best_score * 0.08)
             alts = [b for b in bench
-                    if b != pid and b != out          # the guy being sat isn't an option
+                    if b != pid and b != out and not played(b)
                     and pinfo(b, players)["pos"] in elig
                     and abs(valuer.start_score(b) - best_score) <= band
                     and (valuer.points(b) > 0 or valuer.fp_overall(b))]
@@ -126,11 +134,11 @@ def start_sit(ctx, valuer, players, alt_tol=1.5):
     touched = {x["in"]["id"] for x in swaps} | {x["out"]["id"] for x in swaps}
     close = []
     for slot, pid in lineup:
-        if not pid or pid in touched:
+        if not pid or pid in touched or played(pid):
             continue
         elig = FLEX_ELIG.get(slot, set())
         rivals = [b for b in bench
-                  if b not in touched
+                  if b not in touched and not played(b)
                   and pinfo(b, players)["pos"] in elig
                   and valuer.start_score(b) > 0]
         if not rivals:
@@ -1433,9 +1441,9 @@ def block_edge(idea, stance="Top ideas"):
 
 
 # ── weekly digest (the headline output) ───────────────────────────────────────
-def weekly_digest(ctx, valuer, players, trend_add):
+def weekly_digest(ctx, valuer, players, trend_add, locked=None):
     """One compact recommendation set per league: lineup / waivers / trades."""
-    ss = start_sit(ctx, valuer, players)
+    ss = start_sit(ctx, valuer, players, locked=locked)
     wv = waiver_targets(ctx, valuer, players, trend_add, limit=5)
     tr = trade_ideas(ctx, valuer, players, max_ideas=3)
     lineup_moves = []
