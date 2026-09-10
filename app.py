@@ -250,6 +250,7 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
 .grow{display:grid;grid-template-columns:52px 1fr 96px 92px 1fr;gap:10px;align-items:center;
   background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);
   border-left:3px solid #23324f;border-radius:6px;padding:7px 14px;margin-bottom:4px;font-size:12.5px;}
+.ghead.g6,.grow.g6{grid-template-columns:44px 1fr 76px 74px 78px 80px;}
 .grow.warm{border-left-color:var(--amb);}
 .grow.hot{border-left-color:var(--red);background:linear-gradient(180deg,#1d1526,var(--card2));}
 .grow .wk{color:#cdd7ee;font-weight:800;}
@@ -335,6 +336,7 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
   .lhead,.lrow{grid-template-columns:42px 1fr 30px 52px 42px 38px;gap:5px;padding:8px 10px;font-size:12px;}
   .thead2,.trow{grid-template-columns:24px 1fr 54px 52px 52px 44px;gap:5px;padding:8px 10px;font-size:12px;}
   .ghead,.grow{grid-template-columns:34px 1fr 62px 58px 1fr;gap:6px;padding:7px 10px;font-size:11.5px;}
+  .ghead.g6,.grow.g6{grid-template-columns:26px 1fr 46px 44px 46px 46px;gap:4px;font-size:10.5px;}
   .srow{grid-template-columns:24px 1fr 54px 62px;padding:8px 10px;font-size:12px;}
   .mrow{grid-template-columns:44px 1fr 40px;gap:6px;padding:6px 8px;font-size:11.5px;}
   .mhead .nm{font-size:12.5px;} .mhead .tot{font-size:14px;}
@@ -952,20 +954,34 @@ def render_guillotine():
                 f'the lowest goes out, so the field shrinks as it really would. An '
                 f'average team among the {summary["teams"]} still standing carries '
                 f'{base:.0f}% risk a week — anything above that is a week to prepare '
-                f'for. {chopped}</div>',
+                f'for. <b>Cushion</b> is how far your projection sits above the '
+                f'lowest score that is not yours — the bar you actually have to '
+                f'clear. Inside 10 points is one bad afternoon from the chop. '
+                f'{chopped}</div>',
                 unsafe_allow_html=True)
 
+            if summary.get("endgame"):
+                st.markdown('<div class="note"><b>Endgame.</b> With '
+                            f'{summary["teams"]} left everyone is stacked and the '
+                            'low score is whoever had the quiet Sunday, not a '
+                            'collapsed roster. Protecting a floor stops paying '
+                            'here — start the boom weeks and the good matchups, '
+                            'and spend what is left of the budget.</div>',
+                            unsafe_allow_html=True)
+
             hdr("Week by week")
-            st.markdown('<div class="ghead"><div>WK</div><div>YOUR PROJ</div>'
-                        '<div>RANK</div><div>OUT THIS WK</div><div>STILL ALIVE</div>'
-                        '</div>', unsafe_allow_html=True)
+            st.markdown('<div class="ghead g6"><div>WK</div><div>YOUR PROJ</div>'
+                        '<div>CUSHION</div><div>RANK</div><div>OUT THIS WK</div>'
+                        '<div>STILL ALIVE</div></div>', unsafe_allow_html=True)
             for r in rows:
                 risk = ("hot" if r["elim_pct"] >= base * 1.15
                         else "warm" if r["elim_pct"] >= base * 0.9 else "")
+                cu = r["cushion"]
                 st.markdown(
-                    f'<div class="grow {risk}"><div class="wk">{r["week"]}</div>'
+                    f'<div class="grow g6 {risk}"><div class="wk">{r["week"]}</div>'
                     f'<div class="n">{r["points"]:.1f}</div>'
-                    f'<div class="c">{r["rank"]} of {r["teams"]}</div>'
+                    f'<div class="n{" r" if cu < 10 else ""}">{cu:+.1f}</div>'
+                    f'<div class="c">{r["rank"]}/{r["teams"]}</div>'
                     f'<div class="n">{r["elim_pct"]:.1f}%</div>'
                     f'<div class="n">{r["alive_pct"]:.0f}%</div></div>',
                     unsafe_allow_html=True)
@@ -1002,41 +1018,115 @@ def render_guillotine():
                                 unsafe_allow_html=True)
 
     with sub[1]:
-        me = ctx["my_roster"]
-        budget = ctx.get("waiver_budget") or 0
-        used = (me or {}).get("waiver_budget_used", 0)
-        left = budget - used
         weeks_left = max(1, w1 - data["week"] + 1)
-        kc = st.columns(4)
-        tiles = [(f"{left:,}", "FAAB left", "g", True),
-                 (f"{budget:,}", "Started with", "", False),
-                 (f"{weeks_left}", "Weeks remaining", "c", False),
-                 (f"{left / weeks_left:,.0f}", "Even pace per week", "a", False)]
-        for col, (n, lab, cls, on) in zip(kc, tiles):
-            col.markdown(f'<div class="kpi{" on" if on else ""}"><div class="n {cls}">{n}</div>'
-                         f'<div class="l">{esc(lab)}</div></div>', unsafe_allow_html=True)
-
-        if summary.get("chronic"):
-            hdr("Positions to buy, not stream")
-            st.markdown('<div class="note">A position that trails the league most '
-                        'weeks is a standing hole, and it gets more expensive the '
-                        'closer you buy it to the week you need it. Buy the cover '
-                        '<b>before</b> the bye, not during it — that is when the rest '
-                        'of the league is bidding on the same body.</div>',
+        mk = A.guillotine_market(ctx, dead, weeks_left)
+        if not mk:
+            st.markdown('<div class="empty">This league has no FAAB budget set.</div>',
                         unsafe_allow_html=True)
-            st.markdown('<div class="ghead"><div>POS</div><div>VS LEAGUE MEDIAN</div>'
-                        '<div>SHORT BY</div><div>WEEKS</div><div>WHAT TO DO</div>'
-                        '</div>', unsafe_allow_html=True)
-            for c in summary["chronic"]:
-                st.markdown(
-                    f'<div class="grow {"hot" if c["pct"] >= 25 else "warm"}">'
-                    f'<div class="wk">{esc(c["pos"])}</div>'
-                    f'<div class="c" style="text-align:left">'
-                    f'{c["pct"]}% below, {c["gap"]:.1f} pts a week</div>'
-                    f'<div class="n r">-{c["gap"]:.1f}</div>'
-                    f'<div class="c">{c["weeks"]}/{c["of"]}</div>'
-                    f'<div class="c">{esc(c["urgency"])}</div></div>',
-                    unsafe_allow_html=True)
+        else:
+            kc = st.columns(4)
+            tiles = [(f'${mk["mine"]:,}', "Your FAAB left", "g", True),
+                     (f'{mk["share"]:.1f}%', "Share of the market", "c", False),
+                     (f'{mk["multiple"]:.1f}x', "Versus the field average", "a", False),
+                     (f'#{mk["rank"]} of {mk["alive"]}', "Budget rank", "", False)]
+            for col, (n, lab, cls, on) in zip(kc, tiles):
+                col.markdown(f'<div class="kpi{" on" if on else ""}">'
+                             f'<div class="n {cls}">{n}</div>'
+                             f'<div class="l">{esc(lab)}</div></div>',
+                             unsafe_allow_html=True)
+            edge = ("You hold more than any single rival's entire budget — you can "
+                    f'bid ${mk["top_rival"] + 1:,} and take anyone on the wire.'
+                    if mk["bully"] else
+                    f'The biggest rival budget is ${mk["top_rival"]:,}. '
+                    "Anything above that wins outright.")
+            st.markdown(
+                f'<div class="note"><b>${mk["total"]:,}</b> of FAAB is left across the '
+                f'{mk["alive"]} teams still standing, averaging <b>${mk["avg"]:,.0f}</b> '
+                f'each. An even share would be {mk["even_share"]:.1f}%; you hold '
+                f'<b>{mk["share"]:.1f}%</b>. The market shrinks two ways — teams spend, '
+                f'and chopped teams take their whole budget with them — so the same '
+                f'dollar buys more every week. {edge}</div>',
+                unsafe_allow_html=True)
+
+            if summary.get("chronic"):
+                hdr("Positions to buy, not stream")
+                st.markdown('<div class="note">A position that trails the league most '
+                            'weeks is a standing hole, and it gets more expensive the '
+                            'closer you buy it to the week you need it. Buy the cover '
+                            '<b>before</b> the bye, not during it — that is when the rest '
+                            'of the league is bidding on the same body.</div>',
+                            unsafe_allow_html=True)
+                st.markdown('<div class="ghead"><div>POS</div><div>VS LEAGUE MEDIAN</div>'
+                            '<div>SHORT BY</div><div>WEEKS</div><div>WHAT TO DO</div>'
+                            '</div>', unsafe_allow_html=True)
+                for c in summary["chronic"]:
+                    st.markdown(
+                        f'<div class="grow {"hot" if c["pct"] >= 25 else "warm"}">'
+                        f'<div class="wk">{esc(c["pos"])}</div>'
+                        f'<div class="c" style="text-align:left">'
+                        f'{c["pct"]}% below, {c["gap"]:.1f} pts a week</div>'
+                        f'<div class="n r">-{c["gap"]:.1f}</div>'
+                        f'<div class="c">{c["weeks"]}/{c["of"]}</div>'
+                        f'<div class="c">{esc(c["urgency"])}</div></div>',
+                        unsafe_allow_html=True)
+
+            bids = A.guillotine_bids(ctx, players, ros_for(ctx), mk, maps, dead)
+            if bids:
+                hdr("What the wire is worth right now")
+                st.markdown('<div class="note">Priced as a share of the '
+                            f'<b>${mk["avg"]:,.0f}</b> the average surviving team has '
+                            'left, not of your own budget — that is what you are '
+                            'actually bidding against, and it reprices itself every '
+                            'week as the market drains. A bye still to come is a week '
+                            'of the price you cannot use, so it is discounted; a '
+                            'player with his bye behind him carries a premium.</div>',
+                            unsafe_allow_html=True)
+                st.markdown('<div class="ghead g6"><div>POS</div><div>PLAYER</div>'
+                            '<div>ROS</div><div>FAIR BID</div><div>OF YOURS</div>'
+                            '<div>NOTE</div></div>', unsafe_allow_html=True)
+                for b in bids:
+                    st.markdown(
+                        f'<div class="grow g6"><div class="wk">{esc(b["pos"])}'
+                        f'{b["rank"]}</div>'
+                        f'<div class="c" style="text-align:left">{esc(b["name"])}'
+                        f' <span style="color:var(--mut)">{esc(b["team"] or "FA")}'
+                        f'</span></div><div class="n">{b["ros"]:.0f}</div>'
+                        f'<div class="n g">${b["price"]:,}</div>'
+                        f'<div class="c">{b["of_mine"]:.0f}%</div>'
+                        f'<div class="c">{esc(b["note"])}</div></div>',
+                        unsafe_allow_html=True)
+
+            else:
+                hdr("What the wire is worth right now")
+                st.markdown('<div class="note">Nothing on the wire is worth a real '
+                            'bid — every startable player is rostered. That changes '
+                            'the moment a team is chopped and its whole roster hits '
+                            'free agency, which is what the budget is being held '
+                            'for.</div>', unsafe_allow_html=True)
+
+            weak = summary.get("weak_by_team") or {}
+            if mk["rivals"]:
+                hdr("Who you are bidding against")
+                st.markdown('<div class="note">Play the other budgets, not your own. '
+                            'A team that is thin somewhere and still holding money is '
+                            'the one that will chase a player there — worth knowing '
+                            'before you bid, and worth a blocking bid if the player '
+                            'fixes them and not you.</div>', unsafe_allow_html=True)
+                st.markdown('<div class="ghead"><div>#</div><div>TEAM</div>'
+                            '<div>FAAB LEFT</div><div>SHARE</div>'
+                            '<div>THIN AT</div></div>', unsafe_allow_html=True)
+                for i, rv in enumerate(mk["rivals"], 1):
+                    wk_ = weak.get(rv["roster_id"])
+                    hole = (f'{wk_["pos"]} &mdash; {wk_["pct"]}% below median'
+                            if wk_ else "no clear hole")
+                    st.markdown(
+                        f'<div class="grow{" warm" if wk_ and rv["left"] > mk["avg"] else ""}">'
+                        f'<div class="wk">{i}</div>'
+                        f'<div class="c" style="text-align:left">{esc(rv["name"])}</div>'
+                        f'<div class="n">${rv["left"]:,}</div>'
+                        f'<div class="c">{rv["share"]:.1f}%</div>'
+                        f'<div class="c">{hole}</div></div>',
+                        unsafe_allow_html=True)
 
         targets = A.guillotine_targets(ctx, v, players, maps, w0)
         if targets:

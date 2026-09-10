@@ -1464,6 +1464,121 @@ def weekly_digest(ctx, valuer, players, trend_add, locked=None):
 GUILLOTINE_SD = 26.0        # spread of a team's weekly score around its projection
 
 
+# Waiver prices scale with what the LEAGUE has left to spend, not with what you
+# have. A $200 bid is cheap when everyone is holding $1,000 and close to
+# all-in when the field is down to $300 each, so every tier below is a share of
+# the average remaining budget. As eliminations and spending drain the market
+# the whole board reprices itself, which is the point.
+BID_TIERS = {
+    "RB": ((5, 0.20), (10, 0.10), (20, 0.05), (36, 0.02)),
+    "WR": ((5, 0.20), (10, 0.10), (20, 0.05), (36, 0.02)),
+    "TE": ((2, 0.25), (5, 0.05), (10, 0.025)),
+    "QB": ((5, 0.10), (10, 0.025), (20, 0.01)),
+    # No kickers or defences. They are streamed off the wire for the minimum
+    # every week, and a board that prices them crowds out the players a budget
+    # is actually for.
+}
+
+
+def guillotine_market(ctx, dead=None, weeks_left=1):
+    """The FAAB market: what is left in it, and how much of it is yours.
+
+    Every source on this format says to play the other budgets rather than your
+    own, and none of the tools show you them. Two teams holding $800 are in
+    completely different positions depending on whether the field average is
+    $700 or $150, so what matters is your share of what remains — that is the
+    fraction of the league's buying power you control.
+    """
+    dead = {int(r) for r in (dead or ())}
+    budget = ctx.get("waiver_budget") or 0
+    alive = [t for t in ctx["teams"] if int(t["roster_id"]) not in dead]
+    if not alive or not budget:
+        return {}
+    left = {t["roster_id"]: max(0, budget - (t.get("waiver_budget_used") or 0))
+            for t in alive}
+    total = sum(left.values())
+    avg = total / len(alive)
+    my_rid = ctx["my_roster"]["roster_id"] if ctx["my_roster"] else None
+    mine = left.get(my_rid, 0)
+    rivals = sorted(((t, left[t["roster_id"]]) for t in alive
+                     if t["roster_id"] != my_rid), key=lambda x: -x[1])
+    top_rival = rivals[0][1] if rivals else 0
+    return {
+        "alive": len(alive), "budget": budget, "mine": mine, "total": total,
+        "avg": avg, "share": (100.0 * mine / total) if total else 0.0,
+        "even_share": 100.0 / len(alive),
+        "multiple": (mine / avg) if avg else 0.0,
+        "rank": sum(1 for v in left.values() if v > mine) + 1,
+        "top_rival": top_rival,
+        # With more money than anyone else holds in total you can simply bid a
+        # dollar past their whole budget and take whoever you want.
+        "bully": mine > top_rival and top_rival > 0,
+        "pace": mine / max(1, weeks_left),
+        "rivals": [{"name": t["name"], "roster_id": t["roster_id"], "left": v,
+                    "share": (100.0 * v / total) if total else 0.0}
+                   for t, v in rivals],
+    }
+
+
+def guillotine_bids(ctx, players, ros_pts, market, weekly_maps, dead=None, limit=12):
+    """A fair-value bid on every free agent worth one, priced off the market.
+
+    The tier a player lands in comes from where his rest-of-season projection
+    puts him at his own position across the whole player pool — a top-five back
+    is a top-five back whether he was drafted there or shaken loose by a chop.
+    Two adjustments on top, both from how the format actually trades: a bye
+    still to come is a week you are paying for and not using, and a player who
+    has already had his is worth more than his ranking says.
+    """
+    if not market or not market.get("avg"):
+        return []
+    dead = {int(r) for r in (dead or ())}
+    owned = {str(p) for t in ctx["teams"] if int(t["roster_id"]) not in dead
+             for p in t["players"]}
+    # positional rank across every player with a projection, not just free
+    # agents, so the tier means the same thing all season
+    ranked = {}
+    for pid, pts in ros_pts.items():
+        info = pinfo(pid, players)
+        if not info["team"] or info["pos"] not in BID_TIERS:
+            continue
+        ranked.setdefault(info["pos"], []).append((float(pts), str(pid)))
+    rank_of = {}
+    for pos, rows in ranked.items():
+        for i, (_pts, pid) in enumerate(sorted(rows, reverse=True), 1):
+            rank_of[pid] = (pos, i)
+
+    out = []
+    for pid, (pos, rk) in rank_of.items():
+        if pid in owned:
+            continue
+        pct = next((p for cut, p in BID_TIERS[pos] if rk <= cut), None)
+        if pct is None:
+            continue
+        price = pct * market["avg"]
+        # a bye still ahead is a week of the price you cannot use
+        bye = next((i for i, wk in enumerate(weekly_maps)
+                    if wk.get(pid, 0.0) <= 0), None)
+        note = ""
+        if bye == 0:
+            price, note = price * 0.6, "out this week"
+        elif bye is not None and bye <= 3:
+            price, note = price * 0.75, f"bye in {bye} wk{'s' if bye > 1 else ''}"
+        elif bye is None:
+            price, note = price * 1.15, "no bye left"
+        if price < 1:
+            continue
+        out.append({"pid": pid, "pos": pos, "rank": rk, "note": note,
+                    "name": pinfo(pid, players)["name"],
+                    "team": pinfo(pid, players)["team"],
+                    "price": int(round(price)),
+                    "of_mine": (100.0 * price / market["mine"]) if market["mine"] else 0.0,
+                    "ros": round(float(ros_pts.get(pid, 0.0)), 1)})
+    # Whole tiers price identically, so break the tie on rest-of-season points
+    # rather than leaving it to dict order.
+    return sorted(out, key=lambda x: (-x["price"], -x["ros"]))[:limit]
+
+
 def guillotine_dead(week_scores):
     """Roster ids already guillotined, replayed from the weeks that have finished.
 
@@ -1586,9 +1701,13 @@ def guillotine_outlook(ctx, valuer, players, weekly_maps, week_start,
     for w in range(weeks):
         gone_before = (elim_week[:, me] >= 0) & (elim_week[:, me] < w)
         this_week = elim_week[:, me] == w
+        others = np.delete(proj[w], me)
         out.append({
             "week": week_start + w,
             "points": round(float(proj[w][me]), 1),
+            # margin over the projected chop line: the lowest score that is not
+            # yours. Negative means you ARE the projected chop.
+            "cushion": round(float(proj[w][me] - others.min()), 1),
             "field_low": round(float(proj[w].min()), 1),
             "field_median": round(float(np.median(proj[w])), 1),
             "rank": int((proj[w] > proj[w][me]).sum()) + 1, "teams": n,
@@ -1620,9 +1739,31 @@ def guillotine_outlook(ctx, valuer, players, weekly_maps, week_start,
                             "urgency": _faab_urgency(pct)})
     chronic.sort(key=lambda c: -c["pct"])
 
+    # Where each rival is thin, so a blocking bid can be aimed at the team that
+    # actually needs the player rather than at the best player on the wire.
+    weak_by_team = {}
+    med_tot = {pos: float(np.median(arr, axis=1).sum()) for pos, arr in pos_pts.items()}
+    for t in teams:
+        i = idx_of[t["roster_id"]]
+        best = None
+        for pos, arr in pos_pts.items():
+            if med_tot[pos] <= 0:
+                continue
+            d = (med_tot[pos] - float(arr[:, i].sum())) / med_tot[pos]
+            if best is None or d > best[1]:
+                best = (pos, d)
+        if best and best[1] >= 0.10:
+            weak_by_team[t["roster_id"]] = {"pos": best[0], "pct": round(100 * best[1])}
+
     survived = (elim_week[:, me] < 0).mean()
     return out, {"survive_pct": round(100.0 * survived, 1), "sims": sims,
-                 "teams": n, "dead": len(dead), "chronic": chronic}
+                 "teams": n, "dead": len(dead), "chronic": chronic,
+                 "weak_by_team": weak_by_team,
+                 # Down to a handful of teams everyone is stacked and the low
+                 # score is no longer some collapsed roster — it is whoever had
+                 # the quiet Sunday. Protecting a floor stops paying there and
+                 # chasing a ceiling starts.
+                 "endgame": n <= 5}
 
 
 def _faab_urgency(pct):
