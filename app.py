@@ -244,6 +244,18 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
 /* the calculator's filter chips sit tighter than the page-level ones */
 .stColumn div[data-testid="stPills"] button{padding:3px 11px!important;font-size:11.5px!important;}
 .stColumn div[data-testid="stPills"]{margin:0 0 5px;}
+/* guillotine rows */
+.ghead{display:grid;grid-template-columns:52px 1fr 96px 92px 1fr;gap:10px;padding:0 14px 5px;
+  color:var(--mut);font-size:10px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;}
+.grow{display:grid;grid-template-columns:52px 1fr 96px 92px 1fr;gap:10px;align-items:center;
+  background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);
+  border-left:3px solid #23324f;border-radius:6px;padding:7px 14px;margin-bottom:4px;font-size:12.5px;}
+.grow.warm{border-left-color:var(--amb);}
+.grow.hot{border-left-color:var(--red);background:linear-gradient(180deg,#1d1526,var(--card2));}
+.grow .wk{color:#cdd7ee;font-weight:800;}
+.grow .n{text-align:right;font-weight:800;font-family:'JetBrains Mono',monospace;color:#eef3fc;}
+.grow .n.r{color:var(--red);}
+.grow .c{color:var(--mut);text-align:center;font-weight:600;}
 /* weekly matchup, side by side */
 .mhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
   padding:0 2px 7px;border-bottom:1px solid var(--line);margin-bottom:7px;}
@@ -322,6 +334,7 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
   .thead,.prow{grid-template-columns:46px 1fr 30px 44px 42px;gap:6px;padding:8px 10px;font-size:12px;}
   .lhead,.lrow{grid-template-columns:42px 1fr 30px 52px 42px 38px;gap:5px;padding:8px 10px;font-size:12px;}
   .thead2,.trow{grid-template-columns:24px 1fr 54px 52px 52px 44px;gap:5px;padding:8px 10px;font-size:12px;}
+  .ghead,.grow{grid-template-columns:34px 1fr 62px 58px 1fr;gap:6px;padding:7px 10px;font-size:11.5px;}
   .srow{grid-template-columns:24px 1fr 54px 62px;padding:8px 10px;font-size:12px;}
   .mrow{grid-template-columns:44px 1fr 40px;gap:6px;padding:6px 8px;font-size:11.5px;}
   .mhead .nm{font-size:12.5px;} .mhead .tot{font-size:14px;}
@@ -876,34 +889,125 @@ def render_league_detail(ctx):
 
 # ── guillotine FAAB strategy (placeholder) ───────────────────────────────────
 def render_guillotine():
+    """Only one standings position matters here: last.
+
+    A guillotine league eliminates the lowest score each week, so the useful
+    question is not how good a roster is but how often it finishes bottom of a
+    shrinking field, and which weeks put it there.
+    """
     gl = [c for c in data["contexts"] if c["format"] == "guillotine"]
-    st.markdown(
-        '<div class="actionwrap"><div class="actionhd">🪓 Guillotine FAAB Strategy</div>'
-        '<div class="actionsub">Coming soon — bid sizing for guillotine formats, where '
-        'a team is eliminated each week and their whole roster hits the wire.</div></div>',
-        unsafe_allow_html=True)
-    if not gl:                                  # tab is hidden in this case
+    if not gl:
         return
-    for ctx in gl:
+    ctx = gl[0] if len(gl) == 1 else next(
+        c for c in gl if c["name"] == st.selectbox(
+            "League", [c["name"] for c in gl], key="gl_lg"))
+    v = valuer_for(ctx)
+    w0, w1 = S.fantasy_weeks(ctx["league"], data["week"])
+    maps = weekly_maps_for(ctx)
+
+    sub = st.tabs(["📉 Outlook", "💰 FAAB Strategy"])
+
+    with sub[0]:
+        with st.spinner("Simulating the season…"):
+            rows, summary = A.guillotine_outlook(ctx, v, players, maps, w0)
+        if not rows:
+            st.markdown('<div class="empty">Not enough projection data to model this '
+                        'league yet.</div>', unsafe_allow_html=True)
+        else:
+            base = 100.0 / max(1, summary["teams"])
+            danger = [r for r in rows if r["elim_pct"] >= base * 1.15]
+            worst = max(rows, key=lambda r: r["elim_pct"])
+            kc = st.columns(4)
+            tiles = [(f'{summary["survive_pct"]:.0f}%', "Survive to the end", "g", True),
+                     (f'{summary["teams"]}', "Teams alive", "c", False),
+                     (f'wk {worst["week"]}', "Most dangerous week", "a", False),
+                     (f'{len(danger)}', "Weeks above average risk", "", False)]
+            for col, (n, lab, cls, on) in zip(kc, tiles):
+                col.markdown(f'<div class="kpi{" on" if on else ""}">'
+                             f'<div class="n {cls}">{n}</div>'
+                             f'<div class="l">{esc(lab)}</div></div>',
+                             unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="note">These are odds of finishing <b>last</b>, not of '
+                f'losing a matchup. {summary["sims"]:,} simulated seasons: each '
+                f'surviving team draws a score around its projection every week and '
+                f'the lowest goes out, so the field shrinks as it really would. An '
+                f'average team among {summary["teams"]} carries {base:.0f}% risk a '
+                'week — anything above that is a week to prepare for.</div>',
+                unsafe_allow_html=True)
+
+            hdr("Week by week")
+            st.markdown('<div class="ghead"><div>WK</div><div>YOUR PROJ</div>'
+                        '<div>RANK</div><div>OUT THIS WK</div><div>STILL ALIVE</div>'
+                        '</div>', unsafe_allow_html=True)
+            for r in rows:
+                risk = ("hot" if r["elim_pct"] >= base * 1.15
+                        else "warm" if r["elim_pct"] >= base * 0.9 else "")
+                st.markdown(
+                    f'<div class="grow {risk}"><div class="wk">{r["week"]}</div>'
+                    f'<div class="n">{r["points"]:.1f}</div>'
+                    f'<div class="c">{r["rank"]} of {r["teams"]}</div>'
+                    f'<div class="n">{r["elim_pct"]:.1f}%</div>'
+                    f'<div class="n">{r["alive_pct"]:.0f}%</div></div>',
+                    unsafe_allow_html=True)
+
+            flagged = [r for r in rows if r["out"] or r["soft"]]
+            if flagged:
+                hdr("Why those weeks are soft")
+                for r in flagged[:8]:
+                    with st.expander(f'Week {r["week"]} — {r["points"]:.1f} projected, '
+                                     f'{r["elim_pct"]:.1f}% out'):
+                        if r["out"]:
+                            st.markdown('<div class="note">Not playing: <b>'
+                                        + esc(", ".join(r["out"][:8]))
+                                        + '</b>. The slot falls to the next man up, '
+                                          'which is where the points go.</div>',
+                                        unsafe_allow_html=True)
+                        for slot, name, gap in r["soft"]:
+                            st.markdown(
+                                f'<div class="grow"><div class="wk">{esc(slot)}</div>'
+                                f'<div class="c" style="text-align:left">'
+                                f'{esc(name or "empty")}</div><div class="c"></div>'
+                                f'<div class="n r">-{gap:.1f}</div>'
+                                f'<div class="c">below its normal week</div></div>',
+                                unsafe_allow_html=True)
+
+    with sub[1]:
         me = ctx["my_roster"]
         budget = ctx.get("waiver_budget") or 0
         used = (me or {}).get("waiver_budget_used", 0)
         left = budget - used
-        alive = len(ctx["teams"])
+        weeks_left = max(1, w1 - data["week"] + 1)
         kc = st.columns(4)
-        tiles = [(f"{left:,}", "FAAB remaining", "g", True),
-                 (f"{budget:,}", "Starting budget", "", False),
-                 (alive, "Teams remaining", "c", False),
-                 (f"Wk {data['week']}", "Current week", "a", False)]
+        tiles = [(f"{left:,}", "FAAB left", "g", True),
+                 (f"{budget:,}", "Started with", "", False),
+                 (f"{weeks_left}", "Weeks remaining", "c", False),
+                 (f"{left / weeks_left:,.0f}", "Even pace per week", "a", False)]
         for col, (n, lab, cls, on) in zip(kc, tiles):
             col.markdown(f'<div class="kpi{" on" if on else ""}"><div class="n {cls}">{n}</div>'
                          f'<div class="l">{esc(lab)}</div></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="note"><b>{esc(ctx["name"])}</b> · {alive} teams · '
-                    f'{esc(ctx["scoring_label"])}. Planned: pace your budget against the '
-                    'weeks left, price the eliminated roster hitting the wire, and flag '
-                    'the bids worth spending on.</div>', unsafe_allow_html=True)
 
-
+        targets = A.guillotine_targets(ctx, v, players, maps, w0)
+        if targets:
+            hdr("Where the lineup leaks points")
+            st.markdown('<div class="note">Ranked by what each slot costs across the '
+                        'rest of the season. A low median is a hole every week; a big '
+                        'dip is a cliff in particular weeks, and that is the one to bid '
+                        'on <b>before</b> it arrives. Every eliminated roster hits the '
+                        'wire, so the pool grows as the season goes on.</div>',
+                        unsafe_allow_html=True)
+            st.markdown('<div class="ghead"><div>SLOT</div><div>MEDIAN</div>'
+                        '<div>WORST WK</div><div>DIP</div><div>WEEKS TO COVER</div>'
+                        '</div>', unsafe_allow_html=True)
+            for t in targets:
+                wk = ", ".join(f"wk {x}" for x in t["weak_weeks"]) or "steady"
+                st.markdown(
+                    f'<div class="grow"><div class="wk">{esc(t["pos"])}</div>'
+                    f'<div class="n">{t["median"]:.1f}</div>'
+                    f'<div class="n">{t["floor"]:.1f}</div>'
+                    f'<div class="n r">-{t["dip"]:.1f}</div>'
+                    f'<div class="c" style="text-align:left">{esc(wk)}</div></div>',
+                    unsafe_allow_html=True)
 # ── this week's matchup ticker ───────────────────────────────────────────────
 def render_ticker():
     """Your own matchup in every league, scrolling.
@@ -1755,7 +1859,7 @@ with ticker_slot:
 _has_guillotine = any(c["format"] == "guillotine" for c in data["contexts"])
 _labels = ["⚡ This Week", "🏆 Leagues", "📊 This Week's Rankings", "🤝 Trades"]
 if _has_guillotine:
-    _labels.append("🪓 Guillotine FAAB Strategy (coming soon)")
+    _labels.append("🪓 Guillotine")
 
 top = st.tabs(_labels)
 with top[0]:

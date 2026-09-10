@@ -1458,3 +1458,152 @@ def weekly_digest(ctx, valuer, players, trend_add, locked=None):
         "trades": [f"{t['give']['name']} → {t['get']['name']} w/ {t['partner']}" for t in tr],
         "start_sit": ss, "waiver_rows": wv, "trade_rows": tr,
     }
+
+
+# ── guillotine ────────────────────────────────────────────────────────────────
+GUILLOTINE_SD = 26.0        # spread of a team's weekly score around its projection
+
+
+def guillotine_outlook(ctx, valuer, players, weekly_maps, week_start, sims=3000):
+    """Week-by-week survival odds in a guillotine league.
+
+    The lowest score each week is eliminated, so the question is never "am I
+    good" but "am I last". That cannot be answered a week at a time: the field
+    shrinks as teams go out, and a score that survives week one comfortably can
+    be last among the eight teams still standing in week ten. So the season is
+    simulated — each alive team draws a score around its projection for that
+    week, the lowest goes out, repeat — and the odds fall out of how often you
+    are the one eliminated.
+
+    Returns (rows, summary). Each row is one week: your projection, where it
+    ranks in the field that week, the chance you go out THAT week, and the
+    chance you are still alive going into it, plus the holes that make a bad week
+    bad — starters with no projection are byes or inactives, and a slot filled
+    by a replacement-level body is a slot worth bidding on.
+    """
+    try:
+        import numpy as np
+    except Exception:
+        return [], {}
+    teams = list(ctx["teams"])
+    n = len(teams)
+    if n < 3 or not weekly_maps:
+        return [], {}
+    my_rid = ctx["my_roster"]["roster_id"] if ctx["my_roster"] else None
+    idx_of = {t["roster_id"]: i for i, t in enumerate(teams)}
+    slots = [s for s in ctx["roster_positions"] if s not in BENCH_SLOTS]
+
+    # projected lineup points per team per remaining week
+    proj = np.zeros((len(weekly_maps), n))
+    detail = []
+    for w, wk in enumerate(weekly_maps):
+        holes = []
+        for t in teams:
+            pids = [str(p) for p in t["players"]]
+            lu, _ = optimal_lineup(pids, ctx["roster_positions"], players,
+                                   lambda x: wk.get(str(x), 0.0))
+            proj[w][idx_of[t["roster_id"]]] = sum(wk.get(str(pid), 0.0)
+                                                  for _, pid in lu if pid)
+            if t["roster_id"] == my_rid:
+                # What the lineup looks like this week, slot by slot. The bye
+                # itself is invisible — the optimiser already replaces the man on
+                # bye — so the damage shows up as a slot that scores less than it
+                # usually does, which is the comparison made below.
+                for slot, pid in lu:
+                    holes.append((slot,
+                                  pinfo(pid, players)["name"] if pid else None,
+                                  wk.get(str(pid), 0.0) if pid else 0.0))
+                # who would normally start but is out this week
+                for pid in pids:
+                    if wk.get(str(pid), 0.0) <= 0 and any(
+                            m.get(str(pid), 0.0) > 6 for m in weekly_maps):
+                        holes.append(("OUT", pinfo(pid, players)["name"], 0.0))
+        detail.append(holes)
+
+    rng = np.random.default_rng(12345)
+    weeks = len(weekly_maps)
+    elim_week = np.full((sims, n), -1)
+    alive = np.ones((sims, n), dtype=bool)
+    for w in range(weeks):
+        draw = proj[w] + rng.normal(0.0, GUILLOTINE_SD, size=(sims, n))
+        draw[~alive] = np.inf                      # already out, cannot be last
+        low = draw.argmin(axis=1)
+        rows = np.arange(sims)
+        still = alive.sum(axis=1) > 1              # stop when one team remains
+        elim_week[rows[still], low[still]] = w
+        alive[rows[still], low[still]] = False
+
+    out = []
+    if my_rid is None:
+        return [], {}
+    me = idx_of[my_rid]
+
+    # A slot's normal output, so a weak week can say WHICH slot went soft.
+    normal = {}
+    for w, holes in enumerate(detail):
+        for slot, _name, pts in holes:
+            if slot != "OUT":
+                normal.setdefault(slot, []).append(pts)
+    normal = {k: sorted(v)[len(v) // 2] for k, v in normal.items() if v}
+
+    for w in range(weeks):
+        gone_before = (elim_week[:, me] >= 0) & (elim_week[:, me] < w)
+        this_week = elim_week[:, me] == w
+        rank = int((proj[w] > proj[w][me]).sum()) + 1
+        out.append({
+            "week": week_start + w,
+            "points": round(float(proj[w][me]), 1),
+            "field_low": round(float(proj[w].min()), 1),
+            "field_median": round(float(np.median(proj[w])), 1),
+            "rank": rank, "teams": n,
+            "elim_pct": round(100.0 * this_week.mean(), 1),
+            "alive_pct": round(100.0 * (~gone_before).mean(), 1),
+            "out": [n for s_, n, _ in detail[w] if s_ == "OUT" and n],
+            "soft": sorted(
+                ((slot, name, round(normal.get(slot, 0.0) - pts, 1))
+                 for slot, name, pts in detail[w]
+                 if slot != "OUT" and normal.get(slot, 0.0) - pts > 1.0),
+                key=lambda x: -x[2])[:4],
+        })
+    survived = (elim_week[:, me] < 0).mean()
+    return out, {"survive_pct": round(100.0 * survived, 1),
+                 "sims": sims, "teams": n}
+
+
+def guillotine_targets(ctx, valuer, players, weekly_maps, week_start, trend_add=None,
+                       limit=6):
+    """Positions worth bidding on, and who is available to fill them.
+
+    Ranked by how much a position costs you across the remaining weeks: a slot
+    that goes empty on a bye is a guaranteed zero, and a slot filled by a body
+    barely above replacement bleeds points every week. Both are FAAB problems
+    before they are lineup problems.
+    """
+    if not ctx["my_roster"] or not weekly_maps:
+        return []
+    my_pids = [str(p) for p in ctx["my_roster"]["players"]]
+    cost, by_slot = {}, {}
+    for w, wk in enumerate(weekly_maps):
+        lu, _ = optimal_lineup(my_pids, ctx["roster_positions"], players,
+                               lambda x: wk.get(str(x), 0.0))
+        for slot, pid in lu:
+            elig = FLEX_ELIG.get(slot, set())
+            pos = next(iter(elig)) if len(elig) == 1 else "FLEX"
+            pts = wk.get(str(pid), 0.0) if pid else 0.0
+            by_slot.setdefault(pos, []).append(pts)
+    # A position is worth bidding on when it is weak every week, or when it
+    # collapses in some weeks — a season-long hole and a bye-week cliff are
+    # different problems and both cost points.
+    rows = []
+    for pos, vals in by_slot.items():
+        if not vals:
+            continue
+        vals_sorted = sorted(vals)
+        floor = vals_sorted[0]
+        med = vals_sorted[len(vals_sorted) // 2]
+        worst_weeks = [week_start + i for i, v in enumerate(vals) if v <= med - 3.0]
+        rows.append({"pos": pos, "median": round(med, 1), "floor": round(floor, 1),
+                     "dip": round(med - floor, 1), "weak_weeks": worst_weeks[:4],
+                     "cost": round((med - floor) + max(0.0, 9.0 - med) * 2, 1)})
+    rows.sort(key=lambda r: -r["cost"])
+    return rows[:limit]
