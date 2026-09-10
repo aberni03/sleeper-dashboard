@@ -506,6 +506,16 @@ def weekly_maps_for(ctx):
     return _maps_cache[key]
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _gl_week_scores(league_id, through):
+    """Final scores for every completed week, oldest first."""
+    out = []
+    for wk in range(1, int(through)):
+        m = S.league_matchups(league_id, wk) or []
+        out.append({int(r["roster_id"]): float(r.get("points") or 0.0) for r in m})
+    return out
+
+
 def locked_now():
     """Teams whose week-N game has already started, so their slots are settled."""
     try:
@@ -904,19 +914,27 @@ def render_guillotine():
     v = valuer_for(ctx)
     w0, w1 = S.fantasy_weeks(ctx["league"], data["week"])
     maps = weekly_maps_for(ctx)
+    dead = A.guillotine_dead(_gl_week_scores(ctx["league"]["league_id"], data["week"]))
 
     sub = st.tabs(["📉 Outlook", "💰 FAAB Strategy"])
 
     with sub[0]:
         with st.spinner("Simulating the season…"):
-            rows, summary = A.guillotine_outlook(ctx, v, players, maps, w0)
-        if not rows:
+            rows, summary = A.guillotine_outlook(ctx, v, players, maps, w0, dead=dead)
+        if summary.get("eliminated"):
+            st.markdown('<div class="empty">Your team has been chopped. '
+                        f'{summary["teams"]} still standing.</div>',
+                        unsafe_allow_html=True)
+        elif not rows:
             st.markdown('<div class="empty">Not enough projection data to model this '
                         'league yet.</div>', unsafe_allow_html=True)
         else:
             base = 100.0 / max(1, summary["teams"])
             danger = [r for r in rows if r["elim_pct"] >= base * 1.15]
             worst = max(rows, key=lambda r: r["elim_pct"])
+            chopped = (f'{summary["dead"]} already chopped and dropped from the field.'
+                       if summary.get("dead") else
+                       'Nobody has been chopped yet, so all 18 are in the field.')
             kc = st.columns(4)
             tiles = [(f'{summary["survive_pct"]:.0f}%', "Survive to the end", "g", True),
                      (f'{summary["teams"]}', "Teams alive", "c", False),
@@ -932,8 +950,9 @@ def render_guillotine():
                 f'losing a matchup. {summary["sims"]:,} simulated seasons: each '
                 f'surviving team draws a score around its projection every week and '
                 f'the lowest goes out, so the field shrinks as it really would. An '
-                f'average team among {summary["teams"]} carries {base:.0f}% risk a '
-                'week — anything above that is a week to prepare for.</div>',
+                f'average team among the {summary["teams"]} still standing carries '
+                f'{base:.0f}% risk a week — anything above that is a week to prepare '
+                f'for. {chopped}</div>',
                 unsafe_allow_html=True)
 
             hdr("Week by week")
@@ -951,7 +970,7 @@ def render_guillotine():
                     f'<div class="n">{r["alive_pct"]:.0f}%</div></div>',
                     unsafe_allow_html=True)
 
-            flagged = [r for r in rows if r["out"] or r["soft"]]
+            flagged = [r for r in rows if r["out"] or r["soft"] or r["lag"]]
             if flagged:
                 hdr("Why those weeks are soft")
                 for r in flagged[:8]:
@@ -963,6 +982,16 @@ def render_guillotine():
                                         + '</b>. The slot falls to the next man up, '
                                           'which is where the points go.</div>',
                                         unsafe_allow_html=True)
+                        for lg in r["lag"]:
+                            st.markdown(
+                                f'<div class="grow warm"><div class="wk">'
+                                f'{esc(lg["pos"])}</div>'
+                                f'<div class="c" style="text-align:left">'
+                                f'{lg["mine"]:.1f} vs {lg["median"]:.1f} league median'
+                                f'</div><div class="c"></div>'
+                                f'<div class="n r">-{lg["pct"]}%</div>'
+                                f'<div class="c">{esc(lg["urgency"])}</div></div>',
+                                unsafe_allow_html=True)
                         for slot, name, gap in r["soft"]:
                             st.markdown(
                                 f'<div class="grow"><div class="wk">{esc(slot)}</div>'
@@ -986,6 +1015,28 @@ def render_guillotine():
         for col, (n, lab, cls, on) in zip(kc, tiles):
             col.markdown(f'<div class="kpi{" on" if on else ""}"><div class="n {cls}">{n}</div>'
                          f'<div class="l">{esc(lab)}</div></div>', unsafe_allow_html=True)
+
+        if summary.get("chronic"):
+            hdr("Positions to buy, not stream")
+            st.markdown('<div class="note">A position that trails the league most '
+                        'weeks is a standing hole, and it gets more expensive the '
+                        'closer you buy it to the week you need it. Buy the cover '
+                        '<b>before</b> the bye, not during it — that is when the rest '
+                        'of the league is bidding on the same body.</div>',
+                        unsafe_allow_html=True)
+            st.markdown('<div class="ghead"><div>POS</div><div>VS LEAGUE MEDIAN</div>'
+                        '<div>SHORT BY</div><div>WEEKS</div><div>WHAT TO DO</div>'
+                        '</div>', unsafe_allow_html=True)
+            for c in summary["chronic"]:
+                st.markdown(
+                    f'<div class="grow {"hot" if c["pct"] >= 25 else "warm"}">'
+                    f'<div class="wk">{esc(c["pos"])}</div>'
+                    f'<div class="c" style="text-align:left">'
+                    f'{c["pct"]}% below, {c["gap"]:.1f} pts a week</div>'
+                    f'<div class="n r">-{c["gap"]:.1f}</div>'
+                    f'<div class="c">{c["weeks"]}/{c["of"]}</div>'
+                    f'<div class="c">{esc(c["urgency"])}</div></div>',
+                    unsafe_allow_html=True)
 
         targets = A.guillotine_targets(ctx, v, players, maps, w0)
         if targets:

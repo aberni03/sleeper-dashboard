@@ -1464,7 +1464,28 @@ def weekly_digest(ctx, valuer, players, trend_add, locked=None):
 GUILLOTINE_SD = 26.0        # spread of a team's weekly score around its projection
 
 
-def guillotine_outlook(ctx, valuer, players, weekly_maps, week_start, sims=3000):
+def guillotine_dead(week_scores):
+    """Roster ids already guillotined, replayed from the weeks that have finished.
+
+    Sleeper carries no "eliminated" flag on a roster, so the casualty list is
+    reconstructed from the rule itself: the lowest score of each completed week
+    goes out, and a team that is out cannot go out again. Reading it from the
+    scoreboard rather than from how empty a roster looks means the field shrinks
+    correctly whether or not Sleeper wipes the players of a team that was cut.
+
+    week_scores is one {roster_id: points} map per COMPLETED week, in order.
+    """
+    dead = set()
+    for scores in week_scores:
+        live = {rid: pts for rid, pts in scores.items() if rid not in dead}
+        if len(live) < 2 or not any(v > 0 for v in live.values()):
+            continue                     # no scores for that week; invent nobody
+        dead.add(min(live, key=lambda r: live[r]))
+    return dead
+
+
+def guillotine_outlook(ctx, valuer, players, weekly_maps, week_start,
+                       dead=None, sims=3000):
     """Week-by-week survival odds in a guillotine league.
 
     The lowest score each week is eliminated, so the question is never "am I
@@ -1475,35 +1496,56 @@ def guillotine_outlook(ctx, valuer, players, weekly_maps, week_start, sims=3000)
     week, the lowest goes out, repeat — and the odds fall out of how often you
     are the one eliminated.
 
+    Teams already guillotined are dropped before any of that. They are still in
+    the league's roster list and would otherwise project near zero and absorb
+    every week's elimination, which would read as safety that isn't there.
+
     Returns (rows, summary). Each row is one week: your projection, where it
-    ranks in the field that week, the chance you go out THAT week, and the
-    chance you are still alive going into it, plus the holes that make a bad week
-    bad — starters with no projection are byes or inactives, and a slot filled
-    by a replacement-level body is a slot worth bidding on.
+    ranks in the field that week, the chance you go out THAT week, the chance
+    you are still alive going into it, and the holes that make a bad week bad —
+    starters not playing, slots below their own normal output, and the positions
+    where your starters fall short of what the rest of the league gets.
     """
     try:
         import numpy as np
     except Exception:
         return [], {}
-    teams = list(ctx["teams"])
-    n = len(teams)
-    if n < 3 or not weekly_maps:
-        return [], {}
+    dead = {int(r) for r in (dead or ())}
     my_rid = ctx["my_roster"]["roster_id"] if ctx["my_roster"] else None
+    if my_rid is not None and int(my_rid) in dead:
+        return [], {"eliminated": True, "teams": len(ctx["teams"]) - len(dead)}
+    teams = [t for t in ctx["teams"] if int(t["roster_id"]) not in dead]
+    n = len(teams)
+    if n < 3 or not weekly_maps or my_rid is None:
+        return [], {}
     idx_of = {t["roster_id"]: i for i, t in enumerate(teams)}
-    slots = [s for s in ctx["roster_positions"] if s not in BENCH_SLOTS]
+    if my_rid not in idx_of:
+        return [], {}
+    me = idx_of[my_rid]
+    weeks = len(weekly_maps)
 
-    # projected lineup points per team per remaining week
-    proj = np.zeros((len(weekly_maps), n))
+    # projected lineup points per team per remaining week, and the same split by
+    # the position of whoever actually filled each slot — that split is what
+    # turns "you are weak" into "you are weak at wide receiver".
+    proj = np.zeros((weeks, n))
+    pos_pts = {}
     detail = []
     for w, wk in enumerate(weekly_maps):
         holes = []
         for t in teams:
+            i = idx_of[t["roster_id"]]
             pids = [str(p) for p in t["players"]]
             lu, _ = optimal_lineup(pids, ctx["roster_positions"], players,
                                    lambda x: wk.get(str(x), 0.0))
-            proj[w][idx_of[t["roster_id"]]] = sum(wk.get(str(pid), 0.0)
-                                                  for _, pid in lu if pid)
+            proj[w][i] = sum(wk.get(str(pid), 0.0) for _, pid in lu if pid)
+            for slot, pid in lu:
+                if not pid:
+                    continue
+                pos = pinfo(pid, players)["pos"]
+                if pos not in SKILL and pos not in ("K", "DEF"):
+                    continue
+                arr = pos_pts.setdefault(pos, np.zeros((weeks, n)))
+                arr[w][i] += wk.get(str(pid), 0.0)
             if t["roster_id"] == my_rid:
                 # What the lineup looks like this week, slot by slot. The bye
                 # itself is invisible — the optimiser already replaces the man on
@@ -1521,53 +1563,98 @@ def guillotine_outlook(ctx, valuer, players, weekly_maps, week_start, sims=3000)
         detail.append(holes)
 
     rng = np.random.default_rng(12345)
-    weeks = len(weekly_maps)
     elim_week = np.full((sims, n), -1)
     alive = np.ones((sims, n), dtype=bool)
     for w in range(weeks):
         draw = proj[w] + rng.normal(0.0, GUILLOTINE_SD, size=(sims, n))
         draw[~alive] = np.inf                      # already out, cannot be last
         low = draw.argmin(axis=1)
-        rows = np.arange(sims)
+        rows_ix = np.arange(sims)
         still = alive.sum(axis=1) > 1              # stop when one team remains
-        elim_week[rows[still], low[still]] = w
-        alive[rows[still], low[still]] = False
-
-    out = []
-    if my_rid is None:
-        return [], {}
-    me = idx_of[my_rid]
+        elim_week[rows_ix[still], low[still]] = w
+        alive[rows_ix[still], low[still]] = False
 
     # A slot's normal output, so a weak week can say WHICH slot went soft.
     normal = {}
-    for w, holes in enumerate(detail):
+    for holes in detail:
         for slot, _name, pts in holes:
             if slot != "OUT":
                 normal.setdefault(slot, []).append(pts)
     normal = {k: sorted(v)[len(v) // 2] for k, v in normal.items() if v}
 
+    out = []
     for w in range(weeks):
         gone_before = (elim_week[:, me] >= 0) & (elim_week[:, me] < w)
         this_week = elim_week[:, me] == w
-        rank = int((proj[w] > proj[w][me]).sum()) + 1
         out.append({
             "week": week_start + w,
             "points": round(float(proj[w][me]), 1),
             "field_low": round(float(proj[w].min()), 1),
             "field_median": round(float(np.median(proj[w])), 1),
-            "rank": rank, "teams": n,
+            "rank": int((proj[w] > proj[w][me]).sum()) + 1, "teams": n,
             "elim_pct": round(100.0 * this_week.mean(), 1),
             "alive_pct": round(100.0 * (~gone_before).mean(), 1),
-            "out": [n for s_, n, _ in detail[w] if s_ == "OUT" and n],
+            "out": [nm for s_, nm, _ in detail[w] if s_ == "OUT" and nm],
             "soft": sorted(
                 ((slot, name, round(normal.get(slot, 0.0) - pts, 1))
                  for slot, name, pts in detail[w]
                  if slot != "OUT" and normal.get(slot, 0.0) - pts > 1.0),
                 key=lambda x: -x[2])[:4],
+            "lag": _positional_lag(pos_pts, w, me),
         })
+
+    # Chronic weakness: a position that trails most weeks is a standing FAAB
+    # problem, not a one-week dip, and it should be bought before the dip lands.
+    chronic = []
+    for pos, arr in pos_pts.items():
+        gaps = [float(np.median(arr[w]) - arr[w][me]) for w in range(weeks)]
+        meds = [float(np.median(arr[w])) for w in range(weeks)]
+        tot, med_tot = sum(gaps), sum(meds)
+        if med_tot <= 0 or tot <= 0:
+            continue
+        short = sum(1 for g, m in zip(gaps, meds) if m > 0 and g / m >= 0.15)
+        if short >= max(2, weeks // 4) and tot / med_tot >= 0.10:
+            pct = round(100.0 * tot / med_tot)
+            chronic.append({"pos": pos, "weeks": short, "of": weeks, "pct": pct,
+                            "gap": round(tot / weeks, 1),
+                            "urgency": _faab_urgency(pct)})
+    chronic.sort(key=lambda c: -c["pct"])
+
     survived = (elim_week[:, me] < 0).mean()
-    return out, {"survive_pct": round(100.0 * survived, 1),
-                 "sims": sims, "teams": n}
+    return out, {"survive_pct": round(100.0 * survived, 1), "sims": sims,
+                 "teams": n, "dead": len(dead), "chronic": chronic}
+
+
+def _faab_urgency(pct):
+    """How hard to bid on a position, given how far behind the field it is."""
+    if pct >= 40:
+        return "bid aggressively"
+    if pct >= 25:
+        return "worth a real bid"
+    return "worth an upgrade"
+
+
+def _positional_lag(pos_pts, w, me, min_pts=2.0, min_pct=0.15):
+    """Positions where your starters trail the league median this week.
+
+    Compared against the median rather than the mean so one stacked roster
+    doesn't make the whole league look unreachable, and reported in both points
+    and percent because a 4-point hole at tight end and a 4-point hole at
+    running back are not the same problem.
+    """
+    import numpy as np
+    lag = []
+    for pos, arr in pos_pts.items():
+        mine = float(arr[w][me])
+        med = float(np.median(arr[w]))
+        gap = med - mine
+        if med <= 0 or gap < min_pts or gap / med < min_pct:
+            continue
+        pct = round(100.0 * gap / med)
+        lag.append({"pos": pos, "mine": round(mine, 1), "median": round(med, 1),
+                    "gap": round(gap, 1), "pct": pct,
+                    "urgency": _faab_urgency(pct)})
+    return sorted(lag, key=lambda x: -x["gap"])[:4]
 
 
 def guillotine_targets(ctx, valuer, players, weekly_maps, week_start, trend_add=None,
