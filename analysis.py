@@ -1470,10 +1470,10 @@ GUILLOTINE_SD = 26.0        # spread of a team's weekly score around its project
 # the average remaining budget. As eliminations and spending drain the market
 # the whole board reprices itself, which is the point.
 BID_TIERS = {
-    "RB": ((5, 0.20), (10, 0.10), (20, 0.05), (36, 0.02)),
-    "WR": ((5, 0.20), (10, 0.10), (20, 0.05), (36, 0.02)),
-    "TE": ((2, 0.25), (5, 0.05), (10, 0.025)),
-    "QB": ((5, 0.10), (10, 0.025), (20, 0.01)),
+    "RB": ((5, 0.20), (10, 0.10), (20, 0.05), (36, 0.02), (70, 0.01)),
+    "WR": ((5, 0.20), (10, 0.10), (20, 0.05), (36, 0.02), (70, 0.01)),
+    "TE": ((2, 0.25), (5, 0.05), (10, 0.025), (24, 0.01)),
+    "QB": ((5, 0.10), (10, 0.025), (20, 0.01), (32, 0.005)),
     # No kickers or defences. They are streamed off the wire for the minimum
     # every week, and a board that prices them crowds out the players a budget
     # is actually for.
@@ -1796,6 +1796,151 @@ def _positional_lag(pos_pts, w, me, min_pts=2.0, min_pct=0.15):
                     "gap": round(gap, 1), "pct": pct,
                     "urgency": _faab_urgency(pct)})
     return sorted(lag, key=lambda x: -x["gap"])[:4]
+
+
+def guillotine_bid_advice(ctx, valuer, players, weekly_maps, week_start, ros_pts,
+                          market, pid, dead=None, sims=1500):
+    """What to bid on one specific player, and why.
+
+    Market fair value is only the anchor. Three things move a real bid off it,
+    and all three are knowable:
+
+    What he does for YOUR lineup. Rest-of-season points mean nothing if they sit
+    on your bench — what counts is the change in the lineup you would actually
+    start, week by week, with the byes and the replacements that follow from it.
+
+    What he buys you in survival. This is the only currency in the format, so
+    the roster is simulated twice, with him and without, off the same random
+    draws so the difference is his and not the noise. A player who moves you
+    two points a week and a player who moves you two points in the exact weeks
+    you were projected last are worth very different money.
+
+    Who else wants him. A rival who is thin at his position and still holding
+    budget is a bidder; one who is thin and broke is not. Fair value wins an
+    uncontested auction and loses a contested one.
+    """
+    pid = str(pid)
+    if not market or not market.get("mine"):
+        return {}
+    import copy
+    my_rid = ctx["my_roster"]["roster_id"] if ctx["my_roster"] else None
+    if my_rid is None:
+        return {}
+    dead = {int(r) for r in (dead or ())}
+    if any(pid in [str(p) for p in t["players"]] for t in ctx["teams"]
+           if int(t["roster_id"]) not in dead):
+        return {}
+
+    info = pinfo(pid, players)
+    pos = info["pos"]
+
+    # paired simulation: same seed, same draws, one roster change between them
+    before, s_before = guillotine_outlook(ctx, valuer, players, weekly_maps,
+                                          week_start, dead=dead, sims=sims)
+    if not before:
+        return {}
+    after_ctx = copy.deepcopy(ctx)
+    for t in after_ctx["teams"]:
+        if t["roster_id"] == my_rid:
+            t["players"] = list(t["players"]) + [pid]
+    after_ctx["my_roster"] = next(t for t in after_ctx["teams"]
+                                  if t["roster_id"] == my_rid)
+    after, s_after = guillotine_outlook(after_ctx, valuer, players, weekly_maps,
+                                        week_start, dead=dead, sims=sims)
+    survive_delta = s_after.get("survive_pct", 0.0) - s_before.get("survive_pct", 0.0)
+    pts_delta = (sum(r["points"] for r in after) - sum(r["points"] for r in before))
+    per_week = pts_delta / max(1, len(before))
+    # the weeks he actually rescues, which is where the case for him lives
+    saves = sorted(((b["week"], round(a["points"] - b["points"], 1),
+                     round(b["elim_pct"] - a["elim_pct"], 1))
+                    for a, b in zip(after, before) if a["points"] - b["points"] > 0.5),
+                   key=lambda x: -x[2])[:4]
+
+    fair = 0
+    rk = None
+    ranked = sorted(((float(v), str(k)) for k, v in ros_pts.items()
+                     if pinfo(k, players)["pos"] == pos and pinfo(k, players)["team"]),
+                    reverse=True)
+    for i, (_p, q) in enumerate(ranked, 1):
+        if q == pid:
+            rk = i
+            break
+    if rk is not None and pos in BID_TIERS:
+        pct = next((p for cut, p in BID_TIERS[pos] if rk <= cut), None)
+        if pct:
+            fair = pct * market["avg"]
+
+    # who else is short here and can still pay for it
+    weak = (s_before.get("weak_by_team") or {})
+    contested = [r for r in market["rivals"]
+                 if (weak.get(r["roster_id"]) or {}).get("pos") == pos
+                 and r["left"] >= max(1, fair)]
+    rich = [r for r in market["rivals"] if r["left"] >= max(1, fair)]
+
+    # Need lifts the bid, competition lifts it again, and both are bounded: a
+    # player who does nothing for the lineup does not become worth more because
+    # other people want him.
+    need_mult = 1.0 + min(0.8, max(0.0, per_week) / 8.0)
+    comp_mult = 1.0 + 0.12 * min(4, len(contested))
+
+    # Then patience, which is the whole early-season argument. Fair value above
+    # is what he COSTS, and it is highest in September because that is when
+    # every budget is full — the published price curves have the same player
+    # going for roughly a tenth of his September price by December. So paying
+    # the September number does not just cost money, it costs the several
+    # players that money buys later, and the bid is discounted for it.
+    span = max(1, (week_start + len(weekly_maps) - 1) - 1)
+    progress = min(1.0, max(0.0, (week_start - 1) / span))
+    patience = 0.55 + 0.45 * progress
+
+    # Unless you might not be there. December prices are worth nothing to a
+    # team chopped in October, so near-term danger cancels the discount.
+    base = 100.0 / max(1, s_before.get("teams", 1))
+    near = [r["elim_pct"] for r in before[:3]]
+    urgency = min(1.0, max(0.0, (sum(near) / max(1, len(near)) / base) - 1.0))
+    patience += (1.0 - patience) * urgency
+
+    rec = fair * need_mult * comp_mult * patience
+    # A dollar held is a dollar that still has to win something later, and it
+    # wins nothing at all if you are chopped first — so the ceiling scales with
+    # what the player is actually worth to your survival.
+    ceiling = market["mine"] * min(0.9, 0.15 + 0.06 * max(0.0, survive_delta)) * patience
+    # A dollar past the biggest rival budget cannot be beaten. None, if that
+    # is more than you hold.
+    outright = market["top_rival"] + 1
+    if outright > market["mine"]:
+        outright = None
+
+    why = "market" if rec < ceiling else "ceiling"
+    rec = min(rec, ceiling)
+
+    # Nothing above the biggest rival budget buys anything — a dollar past it
+    # cannot be beaten — and anything below it can be. So when the player is
+    # worth real survival and that number is inside what he is worth, that IS
+    # the number, whether it is above the market price or below it. This is
+    # what stops a fat budget from losing a player it could not be outbid on,
+    # and equally stops it from paying four times over to win.
+    if outright and outright <= ceiling and survive_delta >= 3.0:
+        rec, why = float(outright), "outright"
+    # Never price a player who measurably helps at nothing.
+    if survive_delta > 0.5:
+        rec = max(rec, 1.0)
+    return {
+        "pid": pid, "name": info["name"], "pos": pos, "team": info["team"],
+        "pos_rank": rk, "ros": round(float(ros_pts.get(pid, 0.0)), 1),
+        "fair": int(round(fair)), "rec": int(round(rec)),
+        "max": int(round(min(market["mine"], max(rec * 1.4, ceiling)))),
+        "outright": outright,
+        "patience": round(patience, 2), "urgency": round(urgency, 2), "why": why,
+        "of_budget": (100.0 * rec / market["mine"]) if market["mine"] else 0.0,
+        "leaves": int(market["mine"] - round(rec)),
+        "per_week": round(per_week, 1), "ros_gain": round(pts_delta, 1),
+        "survive_before": s_before.get("survive_pct", 0.0),
+        "survive_after": s_after.get("survive_pct", 0.0),
+        "survive_delta": round(survive_delta, 1),
+        "contested": [r["name"] for r in contested],
+        "rich": len(rich), "saves": saves,
+    }
 
 
 def guillotine_targets(ctx, valuer, players, weekly_maps, week_start, trend_add=None,

@@ -1050,6 +1050,95 @@ def render_guillotine():
                 f'dollar buys more every week. {edge}</div>',
                 unsafe_allow_html=True)
 
+            # ── what to bid on one particular player ─────────────────────
+            hdr("What should I bid?")
+            ros = ros_for(ctx)
+            owned = {str(p) for t in ctx["teams"]
+                     if int(t["roster_id"]) not in dead for p in t["players"]}
+            fa = sorted(((float(pts), str(pid)) for pid, pts in ros.items()
+                         if str(pid) not in owned
+                         and pinfo(pid, players)["pos"] in A.BID_TIERS
+                         and pinfo(pid, players)["team"]), reverse=True)[:250]
+            if not fa:
+                st.markdown('<div class="note">Nobody worth pricing is free.</div>',
+                            unsafe_allow_html=True)
+            else:
+                lab = {f'{pinfo(p, players)["name"]} · '
+                       f'{pinfo(p, players)["pos"]} {pinfo(p, players)["team"]}': p
+                       for _s, p in fa}
+                pick = st.selectbox("Price a free agent", list(lab), key="gl_bid_pick",
+                                    help="Every startable free agent, best first. "
+                                         "The number moves with the week, your "
+                                         "lineup, and what the field can still pay.")
+                adv = A.guillotine_bid_advice(ctx, v, players, maps, w0, ros, mk,
+                                              lab[pick], dead)
+                if not adv:
+                    st.markdown('<div class="note">No read on that one.</div>',
+                                unsafe_allow_html=True)
+                else:
+                    kc = st.columns(4)
+                    tiles = [(f'${adv["rec"]:,}', "Bid this", "g", True),
+                             (f'${adv["fair"]:,}', "Market fair value", "", False),
+                             (f'{adv["survive_delta"]:+.1f}%', "Survival swing", "c", False),
+                             (f'${adv["leaves"]:,}', "Leaves you", "a", False)]
+                    for col, (n_, l_, cls, on) in zip(kc, tiles):
+                        col.markdown(f'<div class="kpi{" on" if on else ""}">'
+                                     f'<div class="n {cls}">{n_}</div>'
+                                     f'<div class="l">{esc(l_)}</div></div>',
+                                     unsafe_allow_html=True)
+                    reason = {
+                        "outright": (f'<b>${adv["rec"]:,}</b> is one dollar past the '
+                                     f'biggest budget left in the league. Nothing '
+                                     f'above it can be beaten and nothing below it '
+                                     f'is safe, so for a player worth this much that '
+                                     f'is simply the number.'),
+                        "ceiling": (f'Capped at <b>${adv["rec"]:,}</b>. Beyond that '
+                                    f'the money does more good staying in the budget '
+                                    f'than it does on this player.'),
+                        "market": (f'<b>${adv["rec"]:,}</b> is the market price for '
+                                   f'his tier, moved for what he does to your lineup '
+                                   f'and for who else is bidding.'),
+                    }[adv["why"]]
+                    contested = (
+                        "Contested — " + ", ".join(adv["contested"][:3])
+                        + (" and others are" if len(adv["contested"]) > 3 else " is")
+                        + f' thin at {adv["pos"]} with money to spend.'
+                        if adv["contested"] else
+                        f'Nobody short at {adv["pos"]} has real money left, so this '
+                        f'should not go to a bidding war.')
+                    early = (
+                        f'It is early, and the same tier of player costs a fraction '
+                        f'of this in December — the bid is discounted for that.'
+                        if adv["patience"] < 0.7 else
+                        f'Late enough that holding the money no longer buys much. '
+                        f'A budget left unspent at the end was worth nothing.'
+                        if adv["patience"] > 0.85 else "")
+                    st.markdown(
+                        f'<div class="note">{reason} He adds <b>{adv["per_week"]:+.1f} '
+                        f'points a week</b> to the lineup you would actually start '
+                        f'({adv["ros_gain"]:+.0f} the rest of the way), which moves '
+                        f'your odds of surviving from <b>{adv["survive_before"]:.1f}%</b> '
+                        f'to <b>{adv["survive_after"]:.1f}%</b> — measured by running '
+                        f'the season twice off the same draws, once with him and once '
+                        f'without, so the difference is his. {contested} {early} '
+                        f'Walk away above <b>${adv["max"]:,}</b>.</div>',
+                        unsafe_allow_html=True)
+                    if adv["saves"]:
+                        st.markdown('<div class="ghead"><div>WK</div>'
+                                    '<div>WHAT HE CHANGES</div><div class="n">PTS</div>'
+                                    '<div class="n">RISK</div>'
+                                    '<div class="c">&nbsp;</div></div>',
+                                    unsafe_allow_html=True)
+                        for wk_, pts_, risk_ in adv["saves"]:
+                            st.markdown(
+                                f'<div class="grow warm"><div class="wk">{wk_}</div>'
+                                f'<div class="c" style="text-align:left">'
+                                f'week you were projected short</div>'
+                                f'<div class="n">+{pts_:.1f}</div>'
+                                f'<div class="n r">-{risk_:.1f}%</div>'
+                                f'<div class="c">chance of the chop</div></div>',
+                                unsafe_allow_html=True)
+
             if summary.get("chronic"):
                 hdr("Positions to buy, not stream")
                 st.markdown('<div class="note">A position that trails the league most '
