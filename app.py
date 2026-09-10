@@ -251,6 +251,8 @@ div[data-testid="stPills"] button[kind="pillsActive"],div[data-testid="stButtonG
   background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);
   border-left:3px solid #23324f;border-radius:6px;padding:7px 14px;margin-bottom:4px;font-size:12.5px;}
 .ghead.g6,.grow.g6{grid-template-columns:44px 1fr 76px 74px 78px 80px;}
+.ghead .n{text-align:right;}
+.ghead .c{text-align:center;}
 .grow.warm{border-left-color:var(--amb);}
 .grow.hot{border-left-color:var(--red);background:linear-gradient(180deg,#1d1526,var(--card2));}
 .grow .wk{color:#cdd7ee;font-weight:800;}
@@ -970,9 +972,9 @@ def render_guillotine():
                             unsafe_allow_html=True)
 
             hdr("Week by week")
-            st.markdown('<div class="ghead g6"><div>WK</div><div>YOUR PROJ</div>'
-                        '<div>CUSHION</div><div>RANK</div><div>OUT THIS WK</div>'
-                        '<div>STILL ALIVE</div></div>', unsafe_allow_html=True)
+            st.markdown('<div class="ghead g6"><div>WK</div><div class="n">YOUR PROJ</div>'
+                        '<div class="n">CUSHION</div><div class="c">RANK</div><div class="n">OUT THIS WK</div>'
+                        '<div class="n">STILL ALIVE</div></div>', unsafe_allow_html=True)
             for r in rows:
                 risk = ("hot" if r["elim_pct"] >= base * 1.15
                         else "warm" if r["elim_pct"] >= base * 0.9 else "")
@@ -1057,7 +1059,7 @@ def render_guillotine():
                             'of the league is bidding on the same body.</div>',
                             unsafe_allow_html=True)
                 st.markdown('<div class="ghead"><div>POS</div><div>VS LEAGUE MEDIAN</div>'
-                            '<div>SHORT BY</div><div>WEEKS</div><div>WHAT TO DO</div>'
+                            '<div class="n">SHORT BY</div><div class="c">WEEKS</div><div class="c">WHAT TO DO</div>'
                             '</div>', unsafe_allow_html=True)
                 for c in summary["chronic"]:
                     st.markdown(
@@ -1082,8 +1084,8 @@ def render_guillotine():
                             'player with his bye behind him carries a premium.</div>',
                             unsafe_allow_html=True)
                 st.markdown('<div class="ghead g6"><div>POS</div><div>PLAYER</div>'
-                            '<div>ROS</div><div>FAIR BID</div><div>OF YOURS</div>'
-                            '<div>NOTE</div></div>', unsafe_allow_html=True)
+                            '<div class="n">ROS</div><div class="n">FAIR BID</div><div class="c">OF YOURS</div>'
+                            '<div class="c">NOTE</div></div>', unsafe_allow_html=True)
                 for b in bids:
                     st.markdown(
                         f'<div class="grow g6"><div class="wk">{esc(b["pos"])}'
@@ -1113,8 +1115,8 @@ def render_guillotine():
                             'before you bid, and worth a blocking bid if the player '
                             'fixes them and not you.</div>', unsafe_allow_html=True)
                 st.markdown('<div class="ghead"><div>#</div><div>TEAM</div>'
-                            '<div>FAAB LEFT</div><div>SHARE</div>'
-                            '<div>THIN AT</div></div>', unsafe_allow_html=True)
+                            '<div class="n">FAAB LEFT</div><div class="c">SHARE</div>'
+                            '<div class="c">THIN AT</div></div>', unsafe_allow_html=True)
                 for i, rv in enumerate(mk["rivals"], 1):
                     wk_ = weak.get(rv["roster_id"])
                     hole = (f'{wk_["pos"]} &mdash; {wk_["pct"]}% below median'
@@ -1137,8 +1139,8 @@ def render_guillotine():
                         'on <b>before</b> it arrives. Every eliminated roster hits the '
                         'wire, so the pool grows as the season goes on.</div>',
                         unsafe_allow_html=True)
-            st.markdown('<div class="ghead"><div>SLOT</div><div>MEDIAN</div>'
-                        '<div>WORST WK</div><div>DIP</div><div>WEEKS TO COVER</div>'
+            st.markdown('<div class="ghead"><div>SLOT</div><div class="n">MEDIAN</div>'
+                        '<div class="n">WORST WK</div><div class="n">DIP</div><div>WEEKS TO COVER</div>'
                         '</div>', unsafe_allow_html=True)
             for t in targets:
                 wk = ", ".join(f"wk {x}" for x in t["weak_weeks"]) or "steady"
